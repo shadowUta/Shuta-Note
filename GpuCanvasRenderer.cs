@@ -17,8 +17,10 @@ public sealed class GpuCanvasRenderer : IDisposable
     public bool TryInitialize()
     {
         DisposeNative();
-        int d2dResult = D2D1CreateFactory(FactoryType.SingleThreaded, FactoryOptions.None, FactoryIid, out d2dFactory);
-        int writeResult = DWriteCreateFactory(FactoryType.SingleThreaded, DirectWriteFactoryIid, out dwriteFactory);
+        Guid d2dIid = FactoryIid;
+        Guid writeIid = DirectWriteFactoryIid;
+        int d2dResult = D2D1CreateFactory(FactoryType.SingleThreaded, in d2dIid, IntPtr.Zero, out d2dFactory);
+        int writeResult = DWriteCreateFactory(FactoryType.SingleThreaded, in writeIid, out dwriteFactory);
         if (d2dResult < 0 || writeResult < 0)
         {
             Status = "Direct2D/DirectWrite 工厂初始化失败";
@@ -52,14 +54,12 @@ public sealed class GpuCanvasRenderer : IDisposable
     }
 
     private enum FactoryType : uint { SingleThreaded }
-    private enum FactoryOptions : uint { None }
-
     private static readonly Guid FactoryIid = new("06152247-6f50-465a-9245-118bfd3b6007");
     private static readonly Guid DirectWriteFactoryIid = new("b859ee5a-d838-4b5b-a2e8-1adc7d93db48");
 
     [DllImport("d2d1.dll", CallingConvention = CallingConvention.StdCall)]
-    private static extern int D2D1CreateFactory(FactoryType factoryType, FactoryOptions options, Guid riid, out IntPtr factory);
+    private static extern int D2D1CreateFactory(FactoryType factoryType, in Guid riid, IntPtr factoryOptions, out IntPtr factory);
 
     [DllImport("dwrite.dll", CallingConvention = CallingConvention.StdCall)]
-    private static extern int DWriteCreateFactory(FactoryType factoryType, Guid iid, out IntPtr factory);
+    private static extern int DWriteCreateFactory(FactoryType factoryType, in Guid iid, out IntPtr factory);
 }

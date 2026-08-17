@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private readonly GpuDeviceManager gpuDevice = new();
     private readonly GpuCanvasRenderer gpuCanvas = new();
     private readonly CanvasCoordinateTransform coordinateTransform = new();
+    private D3DImageCanvasHost? gpuCanvasHost;
     private BoardInfo? currentBoard;
     private ToolKind tool;
     private Shape? drawingShape;
@@ -64,7 +65,7 @@ public partial class MainWindow : Window
         Loaded += (_, _) => { CanvasScroll.ScrollToHorizontalOffset(1700); CanvasScroll.ScrollToVerticalOffset(1150); };
         Loaded += (_, _) => InitializeRenderBackend();
         SourceInitialized += (_, _) => ApplySystemBackdrop();
-        Closed += (_, _) => { gpuCanvas.Dispose(); gpuDevice.Dispose(); };
+        Closed += (_, _) => { gpuCanvasHost?.Dispose(); gpuCanvas.Dispose(); gpuDevice.Dispose(); };
     }
 
     private void LoadAppearanceSettings()
@@ -150,6 +151,25 @@ public partial class MainWindow : Window
         {
             if (gpuCanvas.TryInitialize())
             {
+                gpuCanvasHost = new D3DImageCanvasHost { Width = 5000, Height = 3500, IsHitTestVisible = false };
+                if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, 5000, 3500))
+                {
+                    CanvasHostGrid.Children.Insert(0, gpuCanvasHost);
+                    Panel.SetZIndex(gpuCanvasHost, -10);
+                    UpdateGpuDiagnostics();
+                }
+                else
+                {
+                    gpuCanvasHost.Dispose();
+                    gpuCanvasHost = null;
+                    if (renderOptions.EnableGpuFallback)
+                    {
+                        renderOptions.Backend = CanvasRenderBackend.WpfFallback;
+                        SaveAppearanceSettings();
+                        HintText.Text = "D3DImage 共享表面不可用，已自动回退到 WPF 画布";
+                        return;
+                    }
+                }
                 if (renderOptions.ShowDiagnostics) HintText.Text = $"GPU 画布基础设施已就绪 · {gpuDevice.Status} · {gpuCanvas.Status}";
             }
             else if (renderOptions.EnableGpuFallback)
@@ -504,6 +524,14 @@ public partial class MainWindow : Window
         coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset);
         if (BoardCanvas.Parent is FrameworkElement host) host.LayoutTransform = new ScaleTransform(zoom, zoom);
         ZoomText.Text = FocusZoomText.Text = $"{zoom:P0}";
+        UpdateGpuDiagnostics();
+    }
+    private void UpdateGpuDiagnostics()
+    {
+        if (GpuDiagnosticsOverlay is null) return;
+        GpuDiagnosticsOverlay.Visibility = renderOptions.ShowDiagnostics ? Visibility.Visible : Visibility.Collapsed;
+        if (!renderOptions.ShowDiagnostics) return;
+        GpuDiagnosticsText.Text = $"Backend: {renderOptions.Backend}\nD3D11: {gpuDevice.IsAvailable}\nD3DImage: {gpuCanvasHost?.IsReady == true}\nZoom: {zoom:P0}\nStrokes: {BoardCanvas.Strokes.Count}\nElements: {BoardCanvas.Children.Count}";
     }
     private void ZoomIn_Click(object sender, RoutedEventArgs e) => SetZoom(zoom * 1.15);
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(zoom / 1.15);
@@ -642,6 +670,7 @@ public partial class MainWindow : Window
     {
         if (!appearanceReady || GpuDiagnosticsCheckBox is null) return;
         renderOptions.ShowDiagnostics = GpuDiagnosticsCheckBox.IsChecked == true;
+        UpdateGpuDiagnostics();
         SaveAppearanceSettings();
     }
 

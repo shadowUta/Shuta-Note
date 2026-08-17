@@ -44,9 +44,9 @@ Windows Composition 玻璃与 GPU 模糊
 - [x] 通过 Windows DirectWrite COM 工厂完成文本渲染基础设施探测。
 - [x] 创建 `GpuDeviceManager`，完成 D3D11 硬件探测和失败状态管理。
 - [ ] 完善 D3D11 设备丢失重建。
-- [ ] 创建 WPF 承载层，优先使用 `D3DImage`，避免先引入独立 HWND。
-- [ ] 绘制测试纹理、背景网格和诊断信息。
-- [ ] GPU 初始化失败时切换回 WPF 适配器。
+- [x] 创建 WPF 承载层，使用 `D3DImage` 与 D3D9Ex 共享表面，未引入独立 HWND。
+- [x] 创建测试 GPU 表面并绘制后端、缩放和文档数量诊断信息。
+- [x] GPU 初始化失败时切换回 WPF 适配器。
 
 ### Phase 3：Direct2D 画布渲染
 
@@ -74,10 +74,10 @@ Windows Composition 玻璃与 GPU 模糊
 
 ### Phase 6：切换与移除旧实现
 
-- [ ] 增加设置项：GPU 画布、软件回退、诊断信息。
-- [ ] 默认启用 GPU；初始化失败自动回退。
+- [x] 增加设置项：GPU 画布、软件回退、诊断信息。
+- [x] 默认启用 GPU；初始化失败自动回退。
 - [ ] 对比导入、导出、缩放、旋转、绘制、白板切换等功能。
-- [ ] 删除截图计时器、`CroppedBitmap`、`VisualBrush` 和旧模糊代码。
+- [x] 删除截图计时器、`CroppedBitmap`、`VisualBrush` 和旧模糊代码。
 - [ ] 更新 README、启动脚本和故障排查说明。
 
 ## 验收标准

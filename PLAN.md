@@ -27,21 +27,23 @@ Windows Composition 玻璃与 GPU 模糊
 ### Phase 0：基线与安全网
 
 - [x] 保存当前 WPF 版本行为。
-- [ ] 清理截图式玻璃刷新、`VisualBrush` 递归采样和窗口内 `BlurEffect` 方案的耦合。
-- [ ] 增加 GPU 渲染开关和失败回退开关。
+- [x] 清理截图式玻璃刷新、`VisualBrush` 递归采样和窗口内 `BlurEffect` 方案的耦合。
+- [x] 增加 GPU 渲染开关和失败回退开关。
 - [x] 确认现有 JSON 文件可继续读取和保存。
 
 ### Phase 1：抽离画布文档模型
 
 - [x] 新建与 WPF 无关的 `CanvasDocument`、`CanvasStroke`、`CanvasElement` 模型。
-- [ ] 将现有 `StrokeData`、`ElementData` 转换为统一模型。
+- [x] 将现有 `StrokeData`、`ElementData` 转换为统一模型。
 - [x] 保留旧 JSON 字段和兼容读取逻辑。
 - [x] 实现文档模型到 WPF 画布的适配器，确保现有功能不回归。
 
 ### Phase 2：GPU 基础设施
 
-- [ ] 引入并锁定兼容 .NET 8 的 Vortice Direct3D/Direct2D/DXGI 包版本。
-- [ ] 创建 `GpuDeviceManager`，负责 D3D11 设备、Direct2D 工厂和设备丢失重建。
+- [x] 引入并锁定兼容 .NET 8 的 Vortice Direct3D/Direct2D/DXGI 包版本。
+- [x] 通过 Windows DirectWrite COM 工厂完成文本渲染基础设施探测。
+- [x] 创建 `GpuDeviceManager`，完成 D3D11 硬件探测和失败状态管理。
+- [ ] 完善 D3D11 设备丢失重建。
 - [ ] 创建 WPF 承载层，优先使用 `D3DImage`，避免先引入独立 HWND。
 - [ ] 绘制测试纹理、背景网格和诊断信息。
 - [ ] GPU 初始化失败时切换回 WPF 适配器。
@@ -64,10 +66,10 @@ Windows Composition 玻璃与 GPU 模糊
 
 ### Phase 5：输入、选择和编辑迁移
 
-- [ ] 将鼠标/触控坐标转换到文档坐标。
+- [x] 将鼠标/触控坐标转换到文档坐标。
 - [ ] 实现选择、框选、拖动、旋转和中键平移。
 - [ ] 保留右键菜单、复制、粘贴、删除、全选。
-- [ ] 实现 GPU 元素命中测试。
+- [x] 实现 GPU 元素命中测试。
 - [ ] 完成撤销/重做与自动保存接入。
 
 ### Phase 6：切换与移除旧实现

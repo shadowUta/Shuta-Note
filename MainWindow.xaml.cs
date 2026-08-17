@@ -26,6 +26,10 @@ public partial class MainWindow : Window
     private readonly Stack<string> redo = new();
     private readonly string settingsPath;
     private AppearanceSettings appearance = new();
+    private CanvasRenderOptions renderOptions = new();
+    private readonly GpuDeviceManager gpuDevice = new();
+    private readonly GpuCanvasRenderer gpuCanvas = new();
+    private readonly CanvasCoordinateTransform coordinateTransform = new();
     private BoardInfo? currentBoard;
     private ToolKind tool;
     private Shape? drawingShape;
@@ -40,10 +44,6 @@ public partial class MainWindow : Window
     private Action? dialogConfirmAction;
     private FileDialogMode fileDialogMode;
     private string fileDialogDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-    private readonly Dictionary<Border, Image> glassBlurImages = [];
-    private readonly Dictionary<Border, Border> glassTintLayers = [];
-    private DispatcherTimer? glassBlurTimer;
-    private bool updatingGlassSnapshot;
 
     public MainWindow()
     {
@@ -62,29 +62,32 @@ public partial class MainWindow : Window
         BoardList.SelectedIndex = 0;
         SetTool(ToolKind.Select);
         Loaded += (_, _) => { CanvasScroll.ScrollToHorizontalOffset(1700); CanvasScroll.ScrollToVerticalOffset(1150); };
-        Loaded += (_, _) =>
-        {
-            glassBlurTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
-            glassBlurTimer.Tick += (_, _) => UpdateGlassBlurSnapshot();
-            glassBlurTimer.Start();
-            Dispatcher.BeginInvoke(UpdateGlassBlurSnapshot, DispatcherPriority.Loaded);
-        };
-        Closed += (_, _) => glassBlurTimer?.Stop();
+        Loaded += (_, _) => InitializeRenderBackend();
         SourceInitialized += (_, _) => ApplySystemBackdrop();
+        Closed += (_, _) => { gpuCanvas.Dispose(); gpuDevice.Dispose(); };
     }
 
     private void LoadAppearanceSettings()
     {
         try { if (File.Exists(settingsPath)) appearance = JsonSerializer.Deserialize<AppearanceSettings>(File.ReadAllText(settingsPath)) ?? new(); }
         catch { appearance = new(); }
+        renderOptions = appearance.RenderOptions ?? new();
         LightModeRadio.IsChecked = !appearance.DarkMode;
         DarkModeRadio.IsChecked = appearance.DarkMode;
         GlassOpacitySlider.Value = Math.Clamp(appearance.GlassOpacity, 35, 100);
         GlassBlurSlider.Value = Math.Clamp(appearance.GlassBlur, 0, 40);
+        GpuCanvasCheckBox.IsChecked = renderOptions.Backend == CanvasRenderBackend.Direct2DComposition;
+        GpuFallbackCheckBox.IsChecked = renderOptions.EnableGpuFallback;
+        GpuDiagnosticsCheckBox.IsChecked = renderOptions.ShowDiagnostics;
         appearanceReady = true; ApplyAppearance(false);
     }
 
-    private void SaveAppearanceSettings() { if (appearanceReady) File.WriteAllText(settingsPath, JsonSerializer.Serialize(appearance, jsonOptions)); }
+    private void SaveAppearanceSettings()
+    {
+        if (!appearanceReady) return;
+        appearance.RenderOptions = renderOptions;
+        File.WriteAllText(settingsPath, JsonSerializer.Serialize(appearance, jsonOptions));
+    }
     private void ApplyAppearance(bool save = true)
     {
         Color accent = ParseColor(appearance.AccentColor, Color.FromRgb(102, 87, 232)); bool dark = appearance.DarkMode;
@@ -103,63 +106,6 @@ public partial class MainWindow : Window
         SetBrush("SelectionBrush", dark ? Colors.White : accent);
         SetBrush("ActiveColorBrush", activeColor);
         OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop();
-        ApplyGlassEffects();
-    }
-    private void ApplyGlassEffects()
-    {
-        double blur = Math.Clamp(appearance.GlassBlur, 0, 40);
-        foreach (Border glass in new[] { SideGlass, HeaderGlass, ToolbarGlass, StatusGlass })
-        {
-            if (!glassBlurImages.ContainsKey(glass))
-            {
-                UIElement? content = glass.Child;
-                if (content is null) continue;
-                glass.Child = null;
-                Grid host = new();
-                Image image = new() { IsHitTestVisible = false, Stretch = Stretch.Fill };
-                Border tint = new() { IsHitTestVisible = false, Background = new SolidColorBrush(Colors.White) };
-                host.Children.Add(image);
-                host.Children.Add(tint);
-                host.Children.Add(content);
-                glass.Child = host;
-                glassBlurImages[glass] = image;
-                glassTintLayers[glass] = tint;
-            }
-            glassBlurImages[glass].Effect = new BlurEffect { Radius = blur, KernelType = KernelType.Gaussian, RenderingBias = RenderingBias.Quality };
-            glassBlurImages[glass].Opacity = blur <= 0 ? 0 : 1;
-            glassTintLayers[glass].Background = new SolidColorBrush(appearance.DarkMode ? Color.FromArgb(55, 30, 34, 46) : Color.FromArgb(48, 255, 255, 255));
-        }
-        Dispatcher.BeginInvoke(UpdateGlassBlurSnapshot, DispatcherPriority.Render);
-    }
-    private void UpdateGlassBlurSnapshot()
-    {
-        if (updatingGlassSnapshot || !IsLoaded || Viewport.ActualWidth < 2 || Viewport.ActualHeight < 2) return;
-        updatingGlassSnapshot = true;
-        try
-        {
-            int width = Math.Max(2, (int)Math.Ceiling(Viewport.ActualWidth));
-            int height = Math.Max(2, (int)Math.Ceiling(Viewport.ActualHeight));
-            RenderTargetBitmap snapshot = new(width, height, 96, 96, PixelFormats.Pbgra32);
-            snapshot.Render(Viewport);
-            double scaleX = snapshot.PixelWidth / Viewport.ActualWidth;
-            double scaleY = snapshot.PixelHeight / Viewport.ActualHeight;
-            foreach (var pair in glassBlurImages)
-            {
-                Border glass = pair.Key;
-                Point topLeft = glass.TranslatePoint(new Point(0, 0), Viewport);
-                int x = Math.Clamp((int)Math.Round(topLeft.X * scaleX), 0, snapshot.PixelWidth - 1);
-                int y = Math.Clamp((int)Math.Round(topLeft.Y * scaleY), 0, snapshot.PixelHeight - 1);
-                int cropWidth = Math.Clamp((int)Math.Round(glass.ActualWidth * scaleX), 1, snapshot.PixelWidth - x);
-                int cropHeight = Math.Clamp((int)Math.Round(glass.ActualHeight * scaleY), 1, snapshot.PixelHeight - y);
-                pair.Value.Source = new CroppedBitmap(snapshot, new Int32Rect(x, y, cropWidth, cropHeight));
-            }
-        }
-        catch (Exception)
-        {
-            // The visual tree can be in transition during resize, focus mode, or shutdown.
-            // A stale snapshot is preferable to terminating the WPF dispatcher.
-        }
-        finally { updatingGlassSnapshot = false; }
     }
     private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = opacity };
     private static Color ParseColor(string value, Color fallback) { try { return (Color)ColorConverter.ConvertFromString(value); } catch { return fallback; } }
@@ -190,6 +136,41 @@ public partial class MainWindow : Window
             finally { Marshal.FreeHGlobal(policyPtr); }
         }
         catch { }
+    }
+
+    private void InitializeRenderBackend()
+    {
+        if (renderOptions.Backend != CanvasRenderBackend.Direct2DComposition)
+        {
+            HintText.Text = "WPF 软件画布 · GPU 已关闭";
+            return;
+        }
+
+        if (gpuDevice.TryInitialize())
+        {
+            if (gpuCanvas.TryInitialize())
+            {
+                if (renderOptions.ShowDiagnostics) HintText.Text = $"GPU 画布基础设施已就绪 · {gpuDevice.Status} · {gpuCanvas.Status}";
+            }
+            else if (renderOptions.EnableGpuFallback)
+            {
+                renderOptions.Backend = CanvasRenderBackend.WpfFallback;
+                SaveAppearanceSettings();
+                HintText.Text = $"Direct2D 不可用，已自动回退到 WPF 画布 · {gpuCanvas.Status}";
+            }
+            return;
+        }
+
+        if (renderOptions.EnableGpuFallback)
+        {
+            renderOptions.Backend = CanvasRenderBackend.WpfFallback;
+            appearance.RenderOptions = renderOptions;
+            SaveAppearanceSettings();
+            HintText.Text = $"GPU 不可用，已自动回退到 WPF 画布 · {gpuDevice.Status}";
+            return;
+        }
+
+        HintText.Text = $"GPU 初始化失败 · {gpuDevice.Status}";
     }
     private const int WcaAccentPolicy = 19;
     private const int AccentEnableAcrylicBlurBehind = 4;
@@ -408,7 +389,7 @@ public partial class MainWindow : Window
 
     private void Viewport_MouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton == MouseButton.Middle) { isPanning = true; panStart = e.GetPosition(Viewport); panHorizontal = CanvasScroll.HorizontalOffset; panVertical = CanvasScroll.VerticalOffset; Viewport.CaptureMouse(); e.Handled = true; }
+        if (e.ChangedButton == MouseButton.Middle) { isPanning = true; panStart = e.GetPosition(Viewport); panHorizontal = CanvasScroll.HorizontalOffset; panVertical = CanvasScroll.VerticalOffset; coordinateTransform.SetViewport(zoom, -panHorizontal, -panVertical); Viewport.CaptureMouse(); e.Handled = true; }
         else if (tool == ToolKind.Select && e.ChangedButton == MouseButton.Left && TrySelectElement(e.OriginalSource as DependencyObject))
         {
             if (!IsInsideSelectedElements(e.GetPosition(BoardCanvas))) { e.Handled = true; return; }
@@ -446,7 +427,7 @@ public partial class MainWindow : Window
             Point mouse = e.GetPosition(Viewport); double angle = Math.Atan2(mouse.Y - rotationCenter.Y, mouse.X - rotationCenter.X) * 180 / Math.PI;
             rotatingShape.RenderTransformOrigin = new Point(.5, .5); rotatingShape.RenderTransform = new RotateTransform(shapeStartRotation + angle - rotationStartAngle); UpdateSelectionVisuals(); e.Handled = true; return;
         }
-        if (isPanning) { Point p = e.GetPosition(Viewport); CanvasScroll.ScrollToHorizontalOffset(panHorizontal - (p.X - panStart.X)); CanvasScroll.ScrollToVerticalOffset(panVertical - (p.Y - panStart.Y)); e.Handled = true; return; }
+        if (isPanning) { Point p = e.GetPosition(Viewport); CanvasScroll.ScrollToHorizontalOffset(panHorizontal - (p.X - panStart.X)); CanvasScroll.ScrollToVerticalOffset(panVertical - (p.Y - panStart.Y)); coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset); e.Handled = true; return; }
         if (isDraggingElements && e.LeftButton == MouseButtonState.Pressed)
         {
             Point current = e.GetPosition(BoardCanvas); Vector delta = current - elementDragStart;
@@ -517,7 +498,13 @@ public partial class MainWindow : Window
         UpdateRotationHandle();
         e.Handled = true;
     }
-    private void SetZoom(double value) { zoom = Math.Clamp(value, .25, 3); if (BoardCanvas.Parent is FrameworkElement host) host.LayoutTransform = new ScaleTransform(zoom, zoom); ZoomText.Text = FocusZoomText.Text = $"{zoom:P0}"; }
+    private void SetZoom(double value)
+    {
+        zoom = Math.Clamp(value, .25, 3);
+        coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset);
+        if (BoardCanvas.Parent is FrameworkElement host) host.LayoutTransform = new ScaleTransform(zoom, zoom);
+        ZoomText.Text = FocusZoomText.Text = $"{zoom:P0}";
+    }
     private void ZoomIn_Click(object sender, RoutedEventArgs e) => SetZoom(zoom * 1.15);
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => SetZoom(zoom / 1.15);
     private void Fit_Click(object sender, RoutedEventArgs e) { SetZoom(.5); CanvasScroll.ScrollToHorizontalOffset(900); CanvasScroll.ScrollToVerticalOffset(550); }
@@ -639,6 +626,24 @@ public partial class MainWindow : Window
     private void ThemeMode_Checked(object sender, RoutedEventArgs e) { if (!appearanceReady) return; appearance.DarkMode = DarkModeRadio.IsChecked == true; ApplyAppearance(); }
     private void GlassOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) { if (!appearanceReady) return; appearance.GlassOpacity = e.NewValue; ApplyAppearance(); }
     private void GlassBlurSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) { if (!appearanceReady) return; appearance.GlassBlur = e.NewValue; ApplyAppearance(); }
+    private void GpuCanvasCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!appearanceReady || GpuCanvasCheckBox is null) return;
+        renderOptions.Backend = GpuCanvasCheckBox.IsChecked == true ? CanvasRenderBackend.Direct2DComposition : CanvasRenderBackend.WpfFallback;
+        SaveAppearanceSettings();
+    }
+    private void GpuFallbackCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!appearanceReady || GpuFallbackCheckBox is null) return;
+        renderOptions.EnableGpuFallback = GpuFallbackCheckBox.IsChecked == true;
+        SaveAppearanceSettings();
+    }
+    private void GpuDiagnosticsCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!appearanceReady || GpuDiagnosticsCheckBox is null) return;
+        renderOptions.ShowDiagnostics = GpuDiagnosticsCheckBox.IsChecked == true;
+        SaveAppearanceSettings();
+    }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -743,6 +748,13 @@ public partial class MainWindow : Window
 
 public enum ToolKind { Select, Pen, Text, Rectangle, Ellipse, Arrow }
 public sealed class BoardInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public DateTime UpdatedAt { get; set; } public override string ToString() => Name; }
-public sealed class AppearanceSettings { public bool DarkMode { get; set; } public string AccentColor { get; set; } = "#6657E8"; public double GlassOpacity { get; set; } = 90; public double GlassBlur { get; set; } = 18; }
+public sealed class AppearanceSettings
+{
+    public bool DarkMode { get; set; }
+    public string AccentColor { get; set; } = "#6657E8";
+    public double GlassOpacity { get; set; } = 90;
+    public double GlassBlur { get; set; } = 18;
+    public CanvasRenderOptions RenderOptions { get; set; } = new();
+}
 public enum FileDialogMode { OpenImage, SavePng }
 public sealed class FileBrowserItem { public string Name { get; set; } = ""; public string FullPath { get; set; } = ""; public bool IsDirectory { get; set; } public string Icon { get; set; } = ""; public string Description { get; set; } = ""; }

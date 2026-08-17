@@ -114,6 +114,7 @@ public enum CanvasRenderBackend
 
 public sealed class CanvasRenderOptions
 {
-    public CanvasRenderBackend Backend { get; set; } = CanvasRenderBackend.WpfFallback;
+    public CanvasRenderBackend Backend { get; set; } = CanvasRenderBackend.Direct2DComposition;
     public bool EnableGpuFallback { get; set; } = true;
+    public bool ShowDiagnostics { get; set; }
 }

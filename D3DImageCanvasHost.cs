@@ -3,6 +3,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Vortice.Direct3D9;
+using Vortice.Mathematics;
 
 namespace ShutaNote;
 
@@ -60,6 +61,8 @@ public sealed class D3DImageCanvasHost : FrameworkElement, IDisposable
             surface?.Dispose(); texture?.Dispose();
             texture = device.CreateTexture((uint)width, (uint)height, 1, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
             surface = texture.GetSurfaceLevel(0);
+            device.SetRenderTarget(0, surface);
+            device.Clear(ClearFlags.Target, new Vortice.Mathematics.Color(246, 247, 251, 255), 1f, 0);
             image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface.NativePointer, true);
             pixelWidth = width; pixelHeight = height;
             image.AddDirtyRect(new Int32Rect(0, 0, width, height));

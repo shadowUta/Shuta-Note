@@ -45,14 +45,15 @@ Windows Composition 玻璃与 GPU 模糊
 - [x] 创建 `GpuDeviceManager`，完成 D3D11 硬件探测和失败状态管理。
 - [ ] 完善 D3D11 设备丢失重建。
 - [x] 创建 WPF 承载层，使用 `D3DImage` 与 D3D9Ex 共享表面，未引入独立 HWND。
-- [x] 创建测试 GPU 表面并绘制后端、缩放和文档数量诊断信息。
+- [x] 创建测试 GPU 表面并绘制基础背景与后端、缩放和文档数量诊断信息。
 - [x] GPU 初始化失败时切换回 WPF 适配器。
 
 ### Phase 3：Direct2D 画布渲染
 
-- [ ] 实现网格渲染和视口变换。
-- [ ] 实现笔迹路径和抗锯齿。
-- [ ] 实现矩形、椭圆、箭头和图片。
+- [x] 实现视口变换服务并接入 WPF 输入平移和缩放。
+- [ ] 将文档网格和对象绘制提交到 Direct2D 纹理目标。
+- [ ] 实现 Direct2D 笔迹路径和抗锯齿。
+- [ ] 实现 Direct2D 矩形、椭圆、箭头和图片。
 - [ ] 使用 DirectWrite 绘制文本；编辑时仍可临时使用 WPF `TextBox`。
 - [ ] 实现原始画布纹理与低分辨率模糊输入纹理。
 
@@ -60,7 +61,7 @@ Windows Composition 玻璃与 GPU 模糊
 
 - [ ] 创建 Composition 视觉树和画布纹理桥接。
 - [ ] 为侧栏、标题栏、工具栏和状态栏建立独立玻璃视觉层。
-- [ ] 使用 GPU 模糊效果，不再使用 `RenderTargetBitmap` 定时截图。
+- [x] 移除 `RenderTargetBitmap` 定时截图；GPU 模糊效果仍待 Composition 视觉树接入。
 - [ ] 透明度滑条控制材质 Alpha，模糊度滑条控制 GPU 模糊半径。
 - [ ] 保留浅色、深色、主题色和无 GPU 回退效果。
 

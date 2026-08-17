@@ -1,0 +1,13 @@
+/bin/
+/obj/
+/.build-validation/
+.vs/
+*.user
+*.suo
+*.userprefs
+*.pdb
+*.exe
+*.dll
+*.cache
+*.log
+*.tmp

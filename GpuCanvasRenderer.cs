@@ -1,4 +1,8 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
+using System.IO;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Vortice.DCommon;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
@@ -11,6 +15,7 @@ using DWriteFactoryType = Vortice.DirectWrite.FactoryType;
 using DxgiFormat = Vortice.DXGI.Format;
 using D2DAlphaMode = Vortice.DCommon.AlphaMode;
 using D3DFeatureLevel = Vortice.Direct3D.FeatureLevel;
+using D2DPixelFormat = Vortice.DCommon.PixelFormat;
 
 namespace ShutaNote;
 
@@ -24,6 +29,7 @@ public sealed class GpuCanvasRenderer : IDisposable
     private ID2D1Factory? d2dFactory;
     private ID2D1RenderTarget? target;
     private IDWriteFactory? writeFactory;
+    private ID2D1StrokeStyle? roundStrokeStyle;
     private int pixelWidth;
     private int pixelHeight;
 
@@ -43,6 +49,14 @@ public sealed class GpuCanvasRenderer : IDisposable
             Vortice.Direct3D11.D3D11.D3D11CreateDevice((IDXGIAdapter?)null, DriverType.Hardware,
                 DeviceCreationFlags.BgraSupport, featureLevels, out device!, out context!).CheckError();
             d2dFactory = Vortice.Direct2D1.D2D1.D2D1CreateFactory<ID2D1Factory>(D2DFactoryType.SingleThreaded, DebugLevel.None);
+            StrokeStyleProperties strokeProperties = new()
+            {
+                StartCap = CapStyle.Round,
+                EndCap = CapStyle.Round,
+                DashCap = CapStyle.Round,
+                LineJoin = LineJoin.Round
+            };
+            roundStrokeStyle = d2dFactory.CreateStrokeStyle(strokeProperties);
             writeFactory = Vortice.DirectWrite.DWrite.DWriteCreateFactory<IDWriteFactory>(DWriteFactoryType.Shared);
             Status = "D3D11/Direct2D/DirectWrite 已就绪";
             return true;
@@ -71,7 +85,7 @@ public sealed class GpuCanvasRenderer : IDisposable
             using IDXGIResource resource = texture.QueryInterface<IDXGIResource>();
             SharedHandle = resource.SharedHandle;
             dxgiSurface = texture.QueryInterface<IDXGISurface>();
-            RenderTargetProperties properties = new(new PixelFormat(DxgiFormat.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied));
+            RenderTargetProperties properties = new(new D2DPixelFormat(DxgiFormat.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied));
             target = d2dFactory.CreateDxgiSurfaceRenderTarget(dxgiSurface, properties);
             target.AntialiasMode = AntialiasMode.PerPrimitive;
             Status = $"共享画布 {pixelWidth}×{pixelHeight} 已就绪";
@@ -131,7 +145,7 @@ public sealed class GpuCanvasRenderer : IDisposable
         {
             PointData previous = stroke.Points[index - 1];
             PointData current = stroke.Points[index];
-            target.DrawLine(new Vector2((float)previous.X, (float)previous.Y), new Vector2((float)current.X, (float)current.Y), brush, width);
+            target.DrawLine(new Vector2((float)previous.X, (float)previous.Y), new Vector2((float)current.X, (float)current.Y), brush, width, roundStrokeStyle);
         }
     }
 
@@ -144,6 +158,9 @@ public sealed class GpuCanvasRenderer : IDisposable
         float width = (float)Math.Max(1, element.Width);
         float height = (float)Math.Max(1, element.Height);
         Rect bounds = new(left, top, left + width, top + height);
+        Matrix3x2 previousTransform = target.Transform;
+        if (Math.Abs(element.Rotation) > .01)
+            target.Transform = Matrix3x2.CreateRotation((float)(element.Rotation * Math.PI / 180), new Vector2(left + width / 2, top + height / 2)) * previousTransform;
         switch (element.Type)
         {
             case "Rectangle":
@@ -156,6 +173,9 @@ public sealed class GpuCanvasRenderer : IDisposable
             case "Arrow":
                 DrawArrow(element, brush);
                 break;
+            case "Image" when !string.IsNullOrWhiteSpace(element.Image):
+                DrawImage(element.Image, bounds);
+                break;
             case "Text" when !string.IsNullOrEmpty(element.Text):
                 using (IDWriteTextFormat format = writeFactory.CreateTextFormat(
                     string.IsNullOrWhiteSpace(element.FontFamily) ? "Microsoft YaHei UI" : element.FontFamily,
@@ -167,6 +187,33 @@ public sealed class GpuCanvasRenderer : IDisposable
                 }
                 break;
         }
+        target.Transform = previousTransform;
+    }
+
+    private void DrawImage(string encodedImage, Rect bounds)
+    {
+        if (target is null) return;
+        try
+        {
+            byte[] bytes = Convert.FromBase64String(encodedImage);
+            using MemoryStream stream = new(bytes);
+            BitmapDecoder decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            BitmapSource source = decoder.Frames[0];
+            var converted = new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0);
+            int stride = converted.PixelWidth * 4;
+            byte[] pixels = new byte[stride * converted.PixelHeight];
+            converted.CopyPixels(pixels, stride, 0);
+            IntPtr data = Marshal.AllocHGlobal(pixels.Length);
+            try
+            {
+                Marshal.Copy(pixels, 0, data, pixels.Length);
+                BitmapProperties properties = new(new D2DPixelFormat(DxgiFormat.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied));
+                using ID2D1Bitmap bitmap = target.CreateBitmap(new SizeI(converted.PixelWidth, converted.PixelHeight), data, (uint)stride, properties);
+                target.DrawBitmap(bitmap, bounds, 1f, BitmapInterpolationMode.Linear, new Rect(0, 0, converted.PixelWidth, converted.PixelHeight));
+            }
+            finally { Marshal.FreeHGlobal(data); }
+        }
+        catch { }
     }
 
     private void DrawArrow(CanvasElement element, ID2D1Brush brush)
@@ -218,10 +265,12 @@ public sealed class GpuCanvasRenderer : IDisposable
     {
         DisposeSurface();
         writeFactory?.Dispose();
+        roundStrokeStyle?.Dispose();
         d2dFactory?.Dispose();
         context?.Dispose();
         device?.Dispose();
         writeFactory = null;
+        roundStrokeStyle = null;
         d2dFactory = null;
         context = null;
         device = null;

@@ -52,9 +52,9 @@ Windows Composition 玻璃与 GPU 模糊
 
 - [x] 实现视口变换服务并接入 WPF 输入平移和缩放。
 - [x] 将文档网格和基础对象绘制提交到 Direct2D 共享纹理目标。
-- [x] 实现 Direct2D 抗锯齿笔迹折线；平滑路径与圆形线帽继续优化。
-- [ ] 实现 Direct2D 矩形、椭圆、箭头和图片（前三项已完成，图片待迁移）。
-- [ ] 使用 DirectWrite 绘制文本；基础绘制已完成，临时 WPF 编辑层待接入。
+- [x] 实现 Direct2D 抗锯齿笔迹折线和圆形线帽。
+- [x] 实现 Direct2D 矩形、椭圆、箭头、图片及对象旋转。
+- [x] 使用 DirectWrite 绘制文本；编辑时临时显示 WPF `TextBox`。
 - [ ] 实现原始画布纹理与低分辨率模糊输入纹理。
 
 ### Phase 4：Composition 玻璃层

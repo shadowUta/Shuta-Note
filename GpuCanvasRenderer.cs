@@ -1,37 +1,200 @@
-using System.Runtime.InteropServices;
+using System.Numerics;
+using Vortice.DCommon;
+using Vortice.Direct2D1;
+using Vortice.Direct3D;
+using Vortice.Direct3D11;
+using Vortice.DirectWrite;
+using Vortice.DXGI;
+using Vortice.Mathematics;
+using D2DFactoryType = Vortice.Direct2D1.FactoryType;
+using DWriteFactoryType = Vortice.DirectWrite.FactoryType;
+using DxgiFormat = Vortice.DXGI.Format;
+using D2DAlphaMode = Vortice.DCommon.AlphaMode;
+using D3DFeatureLevel = Vortice.Direct3D.FeatureLevel;
 
 namespace ShutaNote;
 
-/// <summary>
-/// GPU 画布渲染器的最小生命周期封装。当前负责创建 Direct2D/DirectWrite 工厂，
-/// 具体画布纹理与 D3DImage 桥接在此边界内逐步替换，WPF 适配器仍可安全回退。
-/// </summary>
+/// <summary>拥有 D3D11 共享纹理、Direct2D 目标及 DirectWrite 工厂的画布渲染器。</summary>
 public sealed class GpuCanvasRenderer : IDisposable
 {
-    private IntPtr d2dFactory;
-    private IntPtr dwriteFactory;
+    private ID3D11Device? device;
+    private ID3D11DeviceContext? context;
+    private ID3D11Texture2D? texture;
+    private IDXGISurface? dxgiSurface;
+    private ID2D1Factory? d2dFactory;
+    private ID2D1RenderTarget? target;
+    private IDWriteFactory? writeFactory;
+    private int pixelWidth;
+    private int pixelHeight;
 
-    public bool IsReady { get; private set; }
+    public bool IsReady => device is not null && d2dFactory is not null && writeFactory is not null;
+    public bool HasSurface => target is not null && SharedHandle != IntPtr.Zero;
+    public bool IsDeviceLost { get; private set; }
+    public IntPtr SharedHandle { get; private set; }
     public string Status { get; private set; } = "未初始化";
 
     public bool TryInitialize()
     {
         DisposeNative();
-        Guid d2dIid = FactoryIid;
-        Guid writeIid = DirectWriteFactoryIid;
-        int d2dResult = D2D1CreateFactory(FactoryType.SingleThreaded, in d2dIid, IntPtr.Zero, out d2dFactory);
-        int writeResult = DWriteCreateFactory(FactoryType.SingleThreaded, in writeIid, out dwriteFactory);
-        if (d2dResult < 0 || writeResult < 0)
+        IsDeviceLost = false;
+        try
         {
-            Status = "Direct2D/DirectWrite 工厂初始化失败";
+            D3DFeatureLevel[] featureLevels = [D3DFeatureLevel.Level_11_0, D3DFeatureLevel.Level_10_0];
+            Vortice.Direct3D11.D3D11.D3D11CreateDevice((IDXGIAdapter?)null, DriverType.Hardware,
+                DeviceCreationFlags.BgraSupport, featureLevels, out device!, out context!).CheckError();
+            d2dFactory = Vortice.Direct2D1.D2D1.D2D1CreateFactory<ID2D1Factory>(D2DFactoryType.SingleThreaded, DebugLevel.None);
+            writeFactory = Vortice.DirectWrite.DWrite.DWriteCreateFactory<IDWriteFactory>(DWriteFactoryType.Shared);
+            Status = "D3D11/Direct2D/DirectWrite 已就绪";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Status = $"GPU 渲染器初始化失败 · {ex.Message}";
             DisposeNative();
             return false;
         }
-
-        IsReady = true;
-        Status = "Direct2D/DirectWrite 工厂已就绪";
-        return true;
     }
+
+    public bool TryCreateSurface(int width, int height)
+    {
+        DisposeSurface();
+        if (!IsReady || device is null || d2dFactory is null) return false;
+        try
+        {
+            pixelWidth = Math.Max(1, width);
+            pixelHeight = Math.Max(1, height);
+            Texture2DDescription description = new(DxgiFormat.B8G8R8A8_UNorm,
+                (uint)pixelWidth, (uint)pixelHeight, 1, 1,
+                BindFlags.RenderTarget | BindFlags.ShaderResource, ResourceUsage.Default,
+                CpuAccessFlags.None, 1, 0, ResourceOptionFlags.Shared);
+            texture = device.CreateTexture2D(description);
+            using IDXGIResource resource = texture.QueryInterface<IDXGIResource>();
+            SharedHandle = resource.SharedHandle;
+            dxgiSurface = texture.QueryInterface<IDXGISurface>();
+            RenderTargetProperties properties = new(new PixelFormat(DxgiFormat.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied));
+            target = d2dFactory.CreateDxgiSurfaceRenderTarget(dxgiSurface, properties);
+            target.AntialiasMode = AntialiasMode.PerPrimitive;
+            Status = $"共享画布 {pixelWidth}×{pixelHeight} 已就绪";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Status = $"共享纹理创建失败 · {ex.Message}";
+            DisposeSurface();
+            return false;
+        }
+    }
+
+    public bool Render(CanvasDocument document, bool darkMode)
+    {
+        if (target is null || writeFactory is null) return false;
+        try
+        {
+            Color4 background = darkMode ? Rgba(24, 27, 36) : Rgba(250, 250, 252);
+            Color4 gridColor = darkMode ? Rgba(66, 72, 88, .72f) : Rgba(203, 208, 219, .78f);
+            target.BeginDraw();
+            target.Clear(background);
+            using (ID2D1SolidColorBrush grid = target.CreateSolidColorBrush(gridColor))
+            {
+                for (int x = 0; x <= pixelWidth; x += 24) target.DrawLine(new Vector2(x, 0), new Vector2(x, pixelHeight), grid, .65f);
+                for (int y = 0; y <= pixelHeight; y += 24) target.DrawLine(new Vector2(0, y), new Vector2(pixelWidth, y), grid, .65f);
+            }
+
+            foreach (CanvasStroke stroke in document.Strokes) DrawStroke(stroke);
+            foreach (CanvasElement element in document.Elements.OrderBy(item => item.Z)) DrawElement(element);
+            target.EndDraw(out _, out _).CheckError();
+            context?.Flush();
+            if (device?.DeviceRemovedReason.Failure == true) device.DeviceRemovedReason.CheckError();
+            Status = $"Direct2D 已绘制 · {document.Strokes.Count} 笔迹 / {document.Elements.Count} 元素";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            IsDeviceLost = device?.DeviceRemovedReason.Failure == true || ex.HResult == unchecked((int)0x8899000C);
+            Status = $"Direct2D 绘制失败 · {ex.Message}";
+            return false;
+        }
+    }
+
+    public bool TryRebuildSurface(int width, int height)
+    {
+        Status = "正在重建设备与共享画布";
+        return TryInitialize() && TryCreateSurface(width, height);
+    }
+
+    private void DrawStroke(CanvasStroke stroke)
+    {
+        if (target is null || stroke.Points.Count == 0) return;
+        using ID2D1SolidColorBrush brush = target.CreateSolidColorBrush(ParseColor(stroke.Color));
+        float width = (float)Math.Max(.5, stroke.Width);
+        for (int index = 1; index < stroke.Points.Count; index++)
+        {
+            PointData previous = stroke.Points[index - 1];
+            PointData current = stroke.Points[index];
+            target.DrawLine(new Vector2((float)previous.X, (float)previous.Y), new Vector2((float)current.X, (float)current.Y), brush, width);
+        }
+    }
+
+    private void DrawElement(CanvasElement element)
+    {
+        if (target is null || writeFactory is null) return;
+        using ID2D1SolidColorBrush brush = target.CreateSolidColorBrush(ParseColor(element.Color ?? "#4841BD"));
+        float left = (float)element.X;
+        float top = (float)element.Y;
+        float width = (float)Math.Max(1, element.Width);
+        float height = (float)Math.Max(1, element.Height);
+        Rect bounds = new(left, top, left + width, top + height);
+        switch (element.Type)
+        {
+            case "Rectangle":
+                target.DrawRectangle(bounds, brush, 2f);
+                break;
+            case "Ellipse":
+                Vector2 center = new(left + width / 2, top + height / 2);
+                target.DrawEllipse(new Ellipse(center, width / 2, height / 2), brush, 2f);
+                break;
+            case "Arrow":
+                DrawArrow(element, brush);
+                break;
+            case "Text" when !string.IsNullOrEmpty(element.Text):
+                using (IDWriteTextFormat format = writeFactory.CreateTextFormat(
+                    string.IsNullOrWhiteSpace(element.FontFamily) ? "Microsoft YaHei UI" : element.FontFamily,
+                    null, element.Bold ? FontWeight.Bold : FontWeight.Normal,
+                    element.Italic ? FontStyle.Italic : FontStyle.Normal,
+                    FontStretch.Normal, (float)Math.Max(8, element.FontSize), "zh-cn"))
+                {
+                    target.DrawText(element.Text, format, bounds, brush);
+                }
+                break;
+        }
+    }
+
+    private void DrawArrow(CanvasElement element, ID2D1Brush brush)
+    {
+        if (target is null) return;
+        Vector2 start = new((float)(element.X + (element.X1 ?? 0)), (float)(element.Y + (element.Y1 ?? 0)));
+        Vector2 end = new((float)(element.X + (element.X2 ?? element.Width)), (float)(element.Y + (element.Y2 ?? element.Height)));
+        target.DrawLine(start, end, brush, 2f);
+        Vector2 direction = Vector2.Normalize(start - end);
+        if (float.IsNaN(direction.X)) return;
+        Vector2 normal = new(-direction.Y, direction.X);
+        target.DrawLine(end, end + direction * 14 + normal * 6, brush, 2f);
+        target.DrawLine(end, end + direction * 14 - normal * 6, brush, 2f);
+    }
+
+    private static Color4 ParseColor(string value)
+    {
+        try
+        {
+            string hex = value.TrimStart('#');
+            if (hex.Length == 8) return Rgba(Convert.ToByte(hex[2..4], 16), Convert.ToByte(hex[4..6], 16), Convert.ToByte(hex[6..8], 16), Convert.ToByte(hex[0..2], 16) / 255f);
+            if (hex.Length == 6) return Rgba(Convert.ToByte(hex[0..2], 16), Convert.ToByte(hex[2..4], 16), Convert.ToByte(hex[4..6], 16));
+        }
+        catch { }
+        return Rgba(72, 65, 189);
+    }
+
+    private static Color4 Rgba(byte red, byte green, byte blue, float alpha = 1) => new(red / 255f, green / 255f, blue / 255f, alpha);
 
     public void Dispose()
     {
@@ -39,27 +202,28 @@ public sealed class GpuCanvasRenderer : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    private void DisposeSurface()
+    {
+        target?.Dispose();
+        dxgiSurface?.Dispose();
+        texture?.Dispose();
+        target = null;
+        dxgiSurface = null;
+        texture = null;
+        SharedHandle = IntPtr.Zero;
+        pixelWidth = pixelHeight = 0;
+    }
+
     private void DisposeNative()
     {
-        Release(d2dFactory);
-        Release(dwriteFactory);
-        d2dFactory = IntPtr.Zero;
-        dwriteFactory = IntPtr.Zero;
-        IsReady = false;
+        DisposeSurface();
+        writeFactory?.Dispose();
+        d2dFactory?.Dispose();
+        context?.Dispose();
+        device?.Dispose();
+        writeFactory = null;
+        d2dFactory = null;
+        context = null;
+        device = null;
     }
-
-    private static void Release(IntPtr value)
-    {
-        if (value != IntPtr.Zero) Marshal.Release(value);
-    }
-
-    private enum FactoryType : uint { SingleThreaded }
-    private static readonly Guid FactoryIid = new("06152247-6f50-465a-9245-118bfd3b6007");
-    private static readonly Guid DirectWriteFactoryIid = new("b859ee5a-d838-4b5b-a2e8-1adc7d93db48");
-
-    [DllImport("d2d1.dll", CallingConvention = CallingConvention.StdCall)]
-    private static extern int D2D1CreateFactory(FactoryType factoryType, in Guid riid, IntPtr factoryOptions, out IntPtr factory);
-
-    [DllImport("dwrite.dll", CallingConvention = CallingConvention.StdCall)]
-    private static extern int DWriteCreateFactory(FactoryType factoryType, in Guid iid, out IntPtr factory);
 }

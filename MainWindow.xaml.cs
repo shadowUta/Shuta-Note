@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private readonly GpuCanvasRenderer gpuCanvas = new();
     private readonly CanvasCoordinateTransform coordinateTransform = new();
     private D3DImageCanvasHost? gpuCanvasHost;
+    private bool rebuildingGpuBackend;
     private BoardInfo? currentBoard;
     private ToolKind tool;
     private Shape? drawingShape;
@@ -106,7 +107,7 @@ public partial class MainWindow : Window
         SetBrush("ViewportBrush", dark ? Color.FromRgb(13, 16, 23) : Color.FromRgb(228, 232, 241));
         SetBrush("SelectionBrush", dark ? Colors.White : accent);
         SetBrush("ActiveColorBrush", activeColor);
-        OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop();
+        OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop(); if (IsLoaded) RenderGpuDocument();
     }
     private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = opacity };
     private static Color ParseColor(string value, Color fallback) { try { return (Color)ColorConverter.ConvertFromString(value); } catch { return fallback; } }
@@ -149,13 +150,15 @@ public partial class MainWindow : Window
 
         if (gpuDevice.TryInitialize())
         {
-            if (gpuCanvas.TryInitialize())
+            if (gpuCanvas.TryInitialize() && gpuCanvas.TryCreateSurface(5000, 3500))
             {
                 gpuCanvasHost = new D3DImageCanvasHost { Width = 5000, Height = 3500, IsHitTestVisible = false };
-                if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, 5000, 3500))
+                if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, 5000, 3500, gpuCanvas.SharedHandle))
                 {
                     CanvasHostGrid.Children.Insert(0, gpuCanvasHost);
                     Panel.SetZIndex(gpuCanvasHost, -10);
+                    BoardCanvas.Opacity = 0;
+                    RenderGpuDocument();
                     UpdateGpuDiagnostics();
                 }
                 else
@@ -243,6 +246,7 @@ public partial class MainWindow : Window
     {
         if (currentBoard is null || restoring) return;
         currentBoard.UpdatedAt = DateTime.Now; File.WriteAllText(BoardPath(currentBoard), CaptureState()); SaveIndex(); SaveStatus.Text = "已保存";
+        RenderGpuDocument();
     }
     private string CaptureState()
     {
@@ -267,12 +271,65 @@ public partial class MainWindow : Window
         }
         return document;
     }
+    private void RenderGpuDocument()
+    {
+        if (gpuCanvasHost?.IsReady != true) return;
+        if (gpuCanvas.Render(CaptureDocument(), appearance.DarkMode)) gpuCanvasHost.InvalidateSurface();
+        else if (!rebuildingGpuBackend && gpuCanvas.IsDeviceLost && TryRebuildGpuBackend()) return;
+        else if (renderOptions.EnableGpuFallback)
+        {
+            ActivateWpfFallback($"GPU 绘制失败，已显示 WPF 画布 · {gpuCanvas.Status}");
+        }
+        UpdateGpuDiagnostics();
+    }
+
+    private bool TryRebuildGpuBackend()
+    {
+        rebuildingGpuBackend = true;
+        try
+        {
+            gpuCanvasHost?.Dispose();
+            if (gpuCanvasHost is not null) CanvasHostGrid.Children.Remove(gpuCanvasHost);
+            gpuCanvasHost = null;
+            if (!gpuCanvas.TryRebuildSurface(5000, 3500)) return false;
+            var replacement = new D3DImageCanvasHost { Width = 5000, Height = 3500, IsHitTestVisible = false };
+            if (!replacement.TryInitialize(new WindowInteropHelper(this).Handle, 5000, 3500, gpuCanvas.SharedHandle))
+            {
+                replacement.Dispose();
+                return false;
+            }
+            gpuCanvasHost = replacement;
+            CanvasHostGrid.Children.Insert(0, replacement);
+            Panel.SetZIndex(replacement, -10);
+            BoardCanvas.Opacity = 0;
+            if (!gpuCanvas.Render(CaptureDocument(), appearance.DarkMode)) return false;
+            replacement.InvalidateSurface();
+            HintText.Text = "GPU 设备已重建";
+            return true;
+        }
+        finally
+        {
+            rebuildingGpuBackend = false;
+            if (gpuCanvasHost?.IsReady != true && renderOptions.EnableGpuFallback)
+                ActivateWpfFallback($"GPU 设备重建失败，已回退到 WPF 画布 · {gpuCanvas.Status}");
+        }
+    }
+
+    private void ActivateWpfFallback(string message)
+    {
+        BoardCanvas.Opacity = 1;
+        gpuCanvasHost?.Dispose();
+        if (gpuCanvasHost is not null) CanvasHostGrid.Children.Remove(gpuCanvasHost);
+        gpuCanvasHost = null;
+        HintText.Text = message;
+    }
     private void LoadBoard(BoardInfo board)
     {
         restoring = true; BoardCanvas.Strokes.Clear(); BoardCanvas.Children.Clear();
         try { if (File.Exists(BoardPath(board))) RestoreState(File.ReadAllText(BoardPath(board))); }
         catch { ShowAppDialog("读取失败", "白板文件无法读取，已为你打开空白画布。", false); }
         restoring = false;
+        RenderGpuDocument();
     }
     private void RestoreState(string json)
     {

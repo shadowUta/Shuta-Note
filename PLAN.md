@@ -43,7 +43,7 @@ Windows Composition 玻璃与 GPU 模糊
 - [x] 引入并锁定兼容 .NET 8 的 Vortice Direct3D/Direct2D/DXGI 包版本。
 - [x] 通过 Windows DirectWrite COM 工厂完成文本渲染基础设施探测。
 - [x] 创建 `GpuDeviceManager`，完成 D3D11 硬件探测和失败状态管理。
-- [ ] 完善 D3D11 设备丢失重建。
+- [x] 完善 D3D11 设备丢失重建。
 - [x] 创建 WPF 承载层，使用 `D3DImage` 与 D3D9Ex 共享表面，未引入独立 HWND。
 - [x] 创建测试 GPU 表面并绘制基础背景与后端、缩放和文档数量诊断信息。
 - [x] GPU 初始化失败时切换回 WPF 适配器。
@@ -51,10 +51,10 @@ Windows Composition 玻璃与 GPU 模糊
 ### Phase 3：Direct2D 画布渲染
 
 - [x] 实现视口变换服务并接入 WPF 输入平移和缩放。
-- [ ] 将文档网格和对象绘制提交到 Direct2D 纹理目标。
-- [ ] 实现 Direct2D 笔迹路径和抗锯齿。
-- [ ] 实现 Direct2D 矩形、椭圆、箭头和图片。
-- [ ] 使用 DirectWrite 绘制文本；编辑时仍可临时使用 WPF `TextBox`。
+- [x] 将文档网格和基础对象绘制提交到 Direct2D 共享纹理目标。
+- [x] 实现 Direct2D 抗锯齿笔迹折线；平滑路径与圆形线帽继续优化。
+- [ ] 实现 Direct2D 矩形、椭圆、箭头和图片（前三项已完成，图片待迁移）。
+- [ ] 使用 DirectWrite 绘制文本；基础绘制已完成，临时 WPF 编辑层待接入。
 - [ ] 实现原始画布纹理与低分辨率模糊输入纹理。
 
 ### Phase 4：Composition 玻璃层

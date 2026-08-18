@@ -1,9 +1,9 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Vortice.Direct3D9;
-using Vortice.Mathematics;
 
 namespace ShutaNote;
 
@@ -20,7 +20,7 @@ public sealed class D3DImageCanvasHost : FrameworkElement, IDisposable
 
     public bool IsReady => surface is not null;
 
-    public bool TryInitialize(IntPtr windowHandle, int width, int height)
+    public bool TryInitialize(IntPtr windowHandle, int width, int height, IntPtr sharedHandle)
     {
         DisposeResources();
         try
@@ -39,7 +39,7 @@ public sealed class D3DImageCanvasHost : FrameworkElement, IDisposable
             device = direct3D!.CreateDeviceEx(0, DeviceType.Hardware, windowHandle,
                 CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve,
                 [parameters], []);
-            Resize(width, height);
+            AttachSharedSurface(width, height, sharedHandle);
             return IsReady;
         }
         catch
@@ -49,20 +49,19 @@ public sealed class D3DImageCanvasHost : FrameworkElement, IDisposable
         }
     }
 
-    public void Resize(int width, int height)
+    public void AttachSharedSurface(int width, int height, IntPtr sharedHandle)
     {
-        if (device is null) return;
+        if (device is null || sharedHandle == IntPtr.Zero) return;
         width = Math.Max(1, width); height = Math.Max(1, height);
-        if (pixelWidth == width && pixelHeight == height && surface is not null) return;
         image.Lock();
         try
         {
             image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
             surface?.Dispose(); texture?.Dispose();
-            texture = device.CreateTexture((uint)width, (uint)height, 1, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
+            IntPtr handle = sharedHandle;
+            texture = device.CreateTexture((uint)width, (uint)height, 1, Usage.RenderTarget,
+                Format.A8R8G8B8, Pool.Default, ref handle);
             surface = texture.GetSurfaceLevel(0);
-            device.SetRenderTarget(0, surface);
-            device.Clear(ClearFlags.Target, new Vortice.Mathematics.Color(246, 247, 251, 255), 1f, 0);
             image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surface.NativePointer, true);
             pixelWidth = width; pixelHeight = height;
             image.AddDirtyRect(new Int32Rect(0, 0, width, height));

@@ -90,7 +90,7 @@ public partial class MainWindow : Window
         renderOptions = appearance.RenderOptions ?? new();
         LightModeRadio.IsChecked = !appearance.DarkMode;
         DarkModeRadio.IsChecked = appearance.DarkMode;
-        GlassOpacitySlider.Value = Math.Clamp(appearance.GlassOpacity, 35, 100);
+        GlassOpacitySlider.Value = Math.Clamp(appearance.GlassOpacity, 35, 200);
         GlassBlurSlider.Value = Math.Clamp(appearance.GlassBlur, 0, 40);
         GpuCanvasCheckBox.IsChecked = renderOptions.Backend == CanvasRenderBackend.Direct2DComposition;
         GpuFallbackCheckBox.IsChecked = renderOptions.EnableGpuFallback;
@@ -131,14 +131,19 @@ public partial class MainWindow : Window
         try
         {
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd == IntPtr.Zero) return;
             int dark = appearance.DarkMode ? 1 : 0;
             DwmSetWindowAttribute(hwnd, 20, ref dark, sizeof(int));
+            // DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 (Acrylic).
+            int backdropType = 3;
+            DwmSetWindowAttribute(hwnd, 38, ref backdropType, sizeof(int));
 
             // Acrylic blur is a compositor effect; DropShadowEffect only blurs a shadow.
             // GradientColor is stored as AABBGGRR by SetWindowCompositionAttribute.
-            uint alpha = (uint)Math.Clamp(appearance.GlassOpacity * .72, 25, 150);
+            double blurStrength = Math.Clamp(appearance.GlassBlur / 40d, 0, 1);
+            uint alpha = (uint)Math.Clamp(appearance.GlassOpacity * (.82 - blurStrength * .28), 20, 220);
             byte tint = appearance.DarkMode ? (byte)28 : (byte)238;
-            byte blurTint = (byte)Math.Clamp(tint + appearance.GlassBlur * (appearance.DarkMode ? .35 : .08), 0, 255);
+            byte blurTint = (byte)Math.Clamp(tint + appearance.GlassBlur * (appearance.DarkMode ? .28 : .06), 0, 255);
             uint gradientColor = alpha << 24 | (uint)blurTint << 16 | (uint)blurTint << 8 | blurTint;
             AccentPolicy policy = new() { AccentState = AccentEnableAcrylicBlurBehind, AccentFlags = 2, GradientColor = gradientColor };
             int size = Marshal.SizeOf(policy);
@@ -800,7 +805,7 @@ public partial class MainWindow : Window
         CanvasScroll.ScrollToVerticalOffset(canvasPoint.Y * zoom - viewportPoint.Y);
         ScheduleViewportRender();
         UpdateGridHighlight(canvasPoint);
-        UpdateRotationHandle();
+        ScheduleSelectionVisualUpdate();
         e.Handled = true;
     }
     private void SetZoom(double value)
@@ -810,7 +815,18 @@ public partial class MainWindow : Window
         if (BoardCanvas.Parent is FrameworkElement host) host.LayoutTransform = new ScaleTransform(zoom, zoom);
         ZoomText.Text = FocusZoomText.Text = $"{zoom:P0}";
         ScheduleViewportRender();
+        ScheduleSelectionVisualUpdate();
         UpdateGpuDiagnostics();
+    }
+    private void CanvasScroll_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset);
+        ScheduleViewportRender();
+        ScheduleSelectionVisualUpdate();
+    }
+    private void ScheduleSelectionVisualUpdate()
+    {
+        Dispatcher.BeginInvoke(UpdateSelectionVisuals, DispatcherPriority.Render);
     }
     private void UpdateGpuDiagnostics()
     {

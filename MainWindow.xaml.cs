@@ -323,6 +323,7 @@ public partial class MainWindow : Window
         gpuCanvasHost = null;
         HintText.Text = message;
     }
+
     private void LoadBoard(BoardInfo board)
     {
         restoring = true; BoardCanvas.Strokes.Clear(); BoardCanvas.Children.Clear();

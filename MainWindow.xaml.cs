@@ -887,6 +887,15 @@ public partial class MainWindow : Window
             bool top = resizeCorner is ResizeCorner.TopLeft or ResizeCorner.TopRight;
             double width = Math.Max(24, resizeWidth + (left ? -localDelta.X : localDelta.X));
             double height = Math.Max(24, resizeHeight + (top ? -localDelta.Y : localDelta.Y));
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+            {
+                double horizontalScale = width / Math.Max(1, resizeWidth);
+                double verticalScale = height / Math.Max(1, resizeHeight);
+                double scale = Math.Abs(horizontalScale - 1) >= Math.Abs(verticalScale - 1) ? horizontalScale : verticalScale;
+                scale = Math.Max(scale, Math.Max(24 / Math.Max(1, resizeWidth), 24 / Math.Max(1, resizeHeight)));
+                width = resizeWidth * scale;
+                height = resizeHeight * scale;
+            }
             element.Width = width; element.Height = height;
             if (element is Line line)
             {

@@ -20,6 +20,8 @@ namespace ShutaNote;
 
 public partial class MainWindow : Window
 {
+    private sealed record GlassBackdrop(Border Panel, Rectangle Source, VisualBrush Brush, BlurEffect Effect);
+
     private readonly ObservableCollection<BoardInfo> boards = [];
     private readonly string dataDir = IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShutaNote");
     private readonly JsonSerializerOptions jsonOptions = new() { WriteIndented = true };
@@ -32,6 +34,7 @@ public partial class MainWindow : Window
     private readonly GpuCanvasRenderer gpuCanvas = new();
     private readonly CanvasCoordinateTransform coordinateTransform = new();
     private readonly SemaphoreSlim saveGate = new(1, 1);
+    private readonly List<GlassBackdrop> glassBackdrops = [];
     private CancellationTokenSource? saveDebounce;
     private string? pendingBoardPath, pendingBoardJson, pendingIndexJson;
     private D3DImageCanvasHost? gpuCanvasHost;
@@ -63,6 +66,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InstallGlassBackdrops();
         Directory.CreateDirectory(dataDir);
         settingsPath = IOPath.Combine(dataDir, "settings.json");
         LoadAppearanceSettings();
@@ -72,8 +76,9 @@ public partial class MainWindow : Window
         if (boards.Count == 0) CreateBoard("我的第一个白板");
         BoardList.SelectedIndex = 0;
         SetTool(ToolKind.Select);
-        Loaded += (_, _) => { CanvasScroll.ScrollToHorizontalOffset(1700); CanvasScroll.ScrollToVerticalOffset(1150); };
+        Loaded += (_, _) => { CanvasScroll.ScrollToHorizontalOffset(1700); CanvasScroll.ScrollToVerticalOffset(1150); UpdateGlassBackdrops(); };
         Loaded += (_, _) => InitializeRenderBackend();
+        SizeChanged += (_, _) => UpdateGlassBackdrops();
         SourceInitialized += (_, _) =>
         {
             ApplySystemBackdrop();
@@ -121,11 +126,66 @@ public partial class MainWindow : Window
         SetBrush("ViewportBrush", dark ? Color.FromRgb(13, 16, 23) : Color.FromRgb(228, 232, 241));
         SetBrush("SelectionBrush", dark ? Colors.White : accent);
         SetBrush("ActiveColorBrush", activeColor);
-        OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop(); if (IsLoaded) RenderGpuDocument();
+        OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; UpdateGlassBackdrops(); if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop(); if (IsLoaded) RenderGpuDocument();
     }
     private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = Math.Clamp(opacity, 0, 1) };
     private static Color ParseColor(string value, Color fallback) { try { return (Color)ColorConverter.ConvertFromString(value); } catch { return fallback; } }
     private static Color Mix(Color foreground, Color background, double amount) => Color.FromRgb((byte)(background.R + (foreground.R - background.R) * amount), (byte)(background.G + (foreground.G - background.G) * amount), (byte)(background.B + (foreground.B - background.B) * amount));
+
+    private void InstallGlassBackdrops()
+    {
+        AddGlassBackdrop(SideGlass, "GlassBrush");
+        AddGlassBackdrop(HeaderGlass, "GlassBrush");
+        AddGlassBackdrop(ToolbarGlass, "ToolbarGlassBrush");
+        AddGlassBackdrop(StatusGlass, "GlassBrush");
+        AddGlassBackdrop(FocusToolbar, "GlassBrushStrong");
+    }
+
+    private void AddGlassBackdrop(Border panel, string tintResource)
+    {
+        UIElement? content = panel.Child;
+        panel.Child = null;
+        panel.Background = Brushes.Transparent;
+        panel.ClipToBounds = true;
+
+        VisualBrush sourceBrush = new(ViewportLayer)
+        {
+            Stretch = Stretch.Fill,
+            ViewboxUnits = BrushMappingMode.Absolute,
+            ViewportUnits = BrushMappingMode.RelativeToBoundingBox,
+            Viewport = new Rect(0, 0, 1, 1)
+        };
+        BlurEffect effect = new() { Radius = appearance.GlassBlur, KernelType = KernelType.Gaussian, RenderingBias = RenderingBias.Performance };
+        Rectangle blurredSource = new() { Fill = sourceBrush, Effect = effect, IsHitTestVisible = false };
+        Rectangle tint = new() { IsHitTestVisible = false };
+        tint.SetResourceReference(Shape.FillProperty, tintResource);
+
+        Grid layers = new();
+        layers.Children.Add(blurredSource);
+        layers.Children.Add(tint);
+        if (content is not null) layers.Children.Add(content);
+        panel.Child = layers;
+        glassBackdrops.Add(new GlassBackdrop(panel, blurredSource, sourceBrush, effect));
+    }
+
+    private void UpdateGlassBackdrops()
+    {
+        if (ViewportLayer is null) return;
+        double radius = Math.Clamp(appearance.GlassBlur, 0, 120);
+        foreach (GlassBackdrop backdrop in glassBackdrops)
+        {
+            backdrop.Effect.Radius = radius;
+            if (!IsLoaded || backdrop.Panel.ActualWidth <= 0 || backdrop.Panel.ActualHeight <= 0) continue;
+            Point origin = backdrop.Panel.TranslatePoint(new Point(0, 0), ViewportLayer);
+            backdrop.Source.Margin = new Thickness(-radius);
+            backdrop.Brush.Viewbox = new Rect(
+                origin.X - radius,
+                origin.Y - radius,
+                backdrop.Panel.ActualWidth + radius * 2,
+                backdrop.Panel.ActualHeight + radius * 2);
+        }
+    }
+
     private void ApplySystemBackdrop()
     {
         try
@@ -936,6 +996,7 @@ public partial class MainWindow : Window
     {
         sidebarCollapsed = !sidebarCollapsed; SideGlass.Visibility = sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
         SideColumn.Width = sidebarCollapsed ? new GridLength(0) : new GridLength(230); ExpandSidebarButton.Visibility = sidebarCollapsed ? Visibility.Visible : Visibility.Collapsed;
+        Dispatcher.BeginInvoke(UpdateGlassBackdrops, DispatcherPriority.Render);
     }
     private void DeleteSelection_Click(object sender, RoutedEventArgs e) { if (BoardCanvas.GetSelectedElements().Count == 0 && BoardCanvas.GetSelectedStrokes().Count == 0) return; RecordUndo(); foreach (var item in BoardCanvas.GetSelectedElements().ToList()) BoardCanvas.Children.Remove(item); BoardCanvas.Strokes.Remove(BoardCanvas.GetSelectedStrokes()); SaveCurrentBoard(); }
     private void CopySelection_Click(object sender, RoutedEventArgs e)
@@ -999,6 +1060,7 @@ public partial class MainWindow : Window
         MainArea.RowDefinitions[1].Height = enabled ? new GridLength(0) : new GridLength(68);
         MainArea.RowDefinitions[3].Height = enabled ? new GridLength(0) : new GridLength(32);
         FocusToolbar.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        Dispatcher.BeginInvoke(UpdateGlassBackdrops, DispatcherPriority.Render);
     }
     private void Pin_Click(object sender, RoutedEventArgs e)
     {

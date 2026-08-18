@@ -121,12 +121,6 @@ public partial class MainWindow : Window
         SetBrush("ViewportBrush", dark ? Color.FromRgb(13, 16, 23) : Color.FromRgb(228, 232, 241));
         SetBrush("SelectionBrush", dark ? Colors.White : accent);
         SetBrush("ActiveColorBrush", activeColor);
-        if (CanvasBlurEffect is not null)
-        {
-            CanvasBlurEffect.Radius = appearance.GlassBlur;
-            CanvasBlurLayer.Visibility = appearance.GlassBlur > 0 ? Visibility.Visible : Visibility.Collapsed;
-            CanvasBlurTint.Opacity = Math.Clamp(appearance.GlassOpacity / 300d * .16, .03, .16);
-        }
         OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop(); if (IsLoaded) RenderGpuDocument();
     }
     private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = Math.Clamp(opacity, 0, 1) };

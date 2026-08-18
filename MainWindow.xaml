@@ -54,13 +54,6 @@
                 <Rectangle x:Name="SelectionMarquee" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="60" HorizontalAlignment="Left" VerticalAlignment="Top" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="1.25" StrokeDashArray="4,3" Fill="Transparent"/><Rectangle x:Name="SelectedElementOutline" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="65" HorizontalAlignment="Left" VerticalAlignment="Top" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="2" Fill="Transparent"/><Canvas x:Name="RotationOverlay" Visibility="Collapsed" Panel.ZIndex="70"><Line x:Name="RotationGuide" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="1.25" StrokeDashArray="3,2" IsHitTestVisible="False"/><Ellipse x:Name="RotationHandle" Width="18" Height="18" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="2" Fill="{DynamicResource CanvasBrush}" Cursor="Hand" ToolTip="拖动进行全向旋转" PreviewMouseLeftButtonDown="RotationHandle_MouseLeftButtonDown"/></Canvas>
             </Grid>
         </Grid>
-        <Grid x:Name="CanvasBlurLayer" Grid.ColumnSpan="2" Panel.ZIndex="5" IsHitTestVisible="False">
-            <Rectangle Stretch="Fill">
-                <Rectangle.Fill><VisualBrush Visual="{Binding ElementName=Viewport}" Stretch="Fill"/></Rectangle.Fill>
-                <Rectangle.Effect><BlurEffect x:Name="CanvasBlurEffect" Radius="18" RenderingBias="Quality"/></Rectangle.Effect>
-            </Rectangle>
-            <Rectangle x:Name="CanvasBlurTint" Fill="{DynamicResource WindowBackground}" Opacity="0.08"/>
-        </Grid>
         <Border x:Name="GpuDiagnosticsOverlay" Grid.ColumnSpan="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12" Padding="10,7" CornerRadius="4" Background="#D0202430" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="80"><TextBlock x:Name="GpuDiagnosticsText" Foreground="White" FontFamily="Consolas" FontSize="12"/></Border>
         <Border x:Name="SideGlass" Grid.Column="0" Panel.ZIndex="10" Margin="8" CornerRadius="6" Background="{DynamicResource GlassBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
             <Grid><Grid.RowDefinitions><RowDefinition Height="68"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="58"/></Grid.RowDefinitions>

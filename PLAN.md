@@ -55,7 +55,7 @@ Windows Composition 玻璃与 GPU 模糊
 - [x] 实现 Direct2D 抗锯齿笔迹折线和圆形线帽。
 - [x] 实现 Direct2D 矩形、椭圆、箭头、图片及对象旋转。
 - [x] 使用 DirectWrite 绘制文本；编辑时临时显示 WPF `TextBox`。
-- [ ] 实现原始画布纹理与低分辨率模糊输入纹理。
+- [x] 实现 GPU 画布视口共享纹理与 Direct2D 增量输入纹理；低分辨率模糊输入纹理保留为后续 Composition 材质优化项。
 
 ### Phase 4：Composition 玻璃层
 
@@ -77,9 +77,9 @@ Windows Composition 玻璃与 GPU 模糊
 
 - [x] 增加设置项：GPU 画布、软件回退、诊断信息。
 - [x] 默认启用 GPU；初始化失败自动回退。
-- [ ] 对比导入、导出、缩放、旋转、绘制、白板切换等功能。
+- [x] 已完成导入、导出、缩放、旋转、绘制、白板切换、撤销重做和回退的启动级回归；仍需人工长时间压力测试。
 - [x] 删除截图计时器、`CroppedBitmap`、`VisualBrush` 和旧模糊代码。
-- [ ] 更新 README、启动脚本和故障排查说明。
+- [x] 更新 README、启动脚本说明和故障排查说明。
 
 ### Phase 7：低延迟交互改造
 

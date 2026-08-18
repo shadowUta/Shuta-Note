@@ -54,6 +54,13 @@
                 <Rectangle x:Name="SelectionMarquee" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="60" HorizontalAlignment="Left" VerticalAlignment="Top" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="1.25" StrokeDashArray="4,3" Fill="Transparent"/><Rectangle x:Name="SelectedElementOutline" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="65" HorizontalAlignment="Left" VerticalAlignment="Top" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="2" Fill="Transparent"/><Canvas x:Name="RotationOverlay" Visibility="Collapsed" Panel.ZIndex="70"><Line x:Name="RotationGuide" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="1.25" StrokeDashArray="3,2" IsHitTestVisible="False"/><Ellipse x:Name="RotationHandle" Width="18" Height="18" Stroke="{DynamicResource SelectionBrush}" StrokeThickness="2" Fill="{DynamicResource CanvasBrush}" Cursor="Hand" ToolTip="拖动进行全向旋转" PreviewMouseLeftButtonDown="RotationHandle_MouseLeftButtonDown"/></Canvas>
             </Grid>
         </Grid>
+        <Grid x:Name="CanvasBlurLayer" Grid.ColumnSpan="2" Panel.ZIndex="5" IsHitTestVisible="False">
+            <Rectangle Stretch="Fill">
+                <Rectangle.Fill><VisualBrush Visual="{Binding ElementName=Viewport}" Stretch="Fill"/></Rectangle.Fill>
+                <Rectangle.Effect><BlurEffect x:Name="CanvasBlurEffect" Radius="18" RenderingBias="Quality"/></Rectangle.Effect>
+            </Rectangle>
+            <Rectangle x:Name="CanvasBlurTint" Fill="{DynamicResource WindowBackground}" Opacity="0.08"/>
+        </Grid>
         <Border x:Name="GpuDiagnosticsOverlay" Grid.ColumnSpan="2" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12" Padding="10,7" CornerRadius="4" Background="#D0202430" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="80"><TextBlock x:Name="GpuDiagnosticsText" Foreground="White" FontFamily="Consolas" FontSize="12"/></Border>
         <Border x:Name="SideGlass" Grid.Column="0" Panel.ZIndex="10" Margin="8" CornerRadius="6" Background="{DynamicResource GlassBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
             <Grid><Grid.RowDefinitions><RowDefinition Height="68"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="58"/></Grid.RowDefinitions>
@@ -113,7 +120,7 @@
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Border Width="28" Height="28" CornerRadius="6" Background="{DynamicResource Primary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"/><StackPanel Grid.Column="1" Margin="12,0"><TextBlock Text="自定义主题色" FontWeight="SemiBold"/><TextBlock Text="从完整调色板中选择" Foreground="{DynamicResource MutedBrush}" FontSize="12"/></StackPanel><TextBlock Grid.Column="2" Text="&#xE72A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}"/></Grid>
                     </Button>
                     <Grid Margin="0,0,0,8"><TextBlock Text="前景玻璃不透明度" FontWeight="SemiBold"/><TextBlock x:Name="OpacityValueText" Text="90%" HorizontalAlignment="Right" Foreground="{DynamicResource MutedBrush}"/></Grid>
-                    <Slider x:Name="GlassOpacitySlider" Minimum="35" Maximum="200" Value="90" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="GlassOpacitySlider_ValueChanged"/>
+                    <Slider x:Name="GlassOpacitySlider" Minimum="35" Maximum="300" Value="90" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="GlassOpacitySlider_ValueChanged"/>
                     <Grid Margin="0,20,0,8"><TextBlock Text="主页玻璃模糊度" FontWeight="SemiBold"/><TextBlock x:Name="GlassBlurValueText" Text="18" HorizontalAlignment="Right" Foreground="{DynamicResource MutedBrush}"/></Grid>
                     <Slider x:Name="GlassBlurSlider" Minimum="0" Maximum="40" Value="18" TickFrequency="2" IsSnapToTickEnabled="True" ValueChanged="GlassBlurSlider_ValueChanged"/>
                     <TextBlock Text="GPU 画布" FontWeight="SemiBold" Margin="0,24,0,10"/>

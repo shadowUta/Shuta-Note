@@ -90,7 +90,7 @@ public partial class MainWindow : Window
         renderOptions = appearance.RenderOptions ?? new();
         LightModeRadio.IsChecked = !appearance.DarkMode;
         DarkModeRadio.IsChecked = appearance.DarkMode;
-        GlassOpacitySlider.Value = Math.Clamp(appearance.GlassOpacity, 35, 200);
+        GlassOpacitySlider.Value = Math.Clamp(appearance.GlassOpacity, 35, 300);
         GlassBlurSlider.Value = Math.Clamp(appearance.GlassBlur, 0, 40);
         GpuCanvasCheckBox.IsChecked = renderOptions.Backend == CanvasRenderBackend.Direct2DComposition;
         GpuFallbackCheckBox.IsChecked = renderOptions.EnableGpuFallback;
@@ -121,9 +121,15 @@ public partial class MainWindow : Window
         SetBrush("ViewportBrush", dark ? Color.FromRgb(13, 16, 23) : Color.FromRgb(228, 232, 241));
         SetBrush("SelectionBrush", dark ? Colors.White : accent);
         SetBrush("ActiveColorBrush", activeColor);
+        if (CanvasBlurEffect is not null)
+        {
+            CanvasBlurEffect.Radius = appearance.GlassBlur;
+            CanvasBlurLayer.Visibility = appearance.GlassBlur > 0 ? Visibility.Visible : Visibility.Collapsed;
+            CanvasBlurTint.Opacity = Math.Clamp(appearance.GlassOpacity / 300d * .16, .03, .16);
+        }
         OpacityValueText.Text = $"{appearance.GlassOpacity:0}%"; GlassBlurValueText.Text = $"{appearance.GlassBlur:0}"; if (save) SaveAppearanceSettings(); if (new WindowInteropHelper(this).Handle != IntPtr.Zero) ApplySystemBackdrop(); if (IsLoaded) RenderGpuDocument();
     }
-    private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = opacity };
+    private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = Math.Clamp(opacity, 0, 1) };
     private static Color ParseColor(string value, Color fallback) { try { return (Color)ColorConverter.ConvertFromString(value); } catch { return fallback; } }
     private static Color Mix(Color foreground, Color background, double amount) => Color.FromRgb((byte)(background.R + (foreground.R - background.R) * amount), (byte)(background.G + (foreground.G - background.G) * amount), (byte)(background.B + (foreground.B - background.B) * amount));
     private void ApplySystemBackdrop()

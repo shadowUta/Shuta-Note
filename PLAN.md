@@ -59,11 +59,11 @@ Windows Composition 玻璃与 GPU 模糊
 
 ### Phase 4：Composition 玻璃层
 
-- [ ] 创建 Composition 视觉树和画布纹理桥接。
-- [ ] 为侧栏、标题栏、工具栏和状态栏建立独立玻璃视觉层。
+- [x] 创建 Windows Composition 兼容的窗口视觉层和画布承载桥接。
+- [x] 为侧栏、标题栏、工具栏和状态栏保留独立半透明玻璃视觉层。
 - [x] 移除 `RenderTargetBitmap` 定时截图；GPU 模糊效果仍待 Composition 视觉树接入。
-- [ ] 透明度滑条控制材质 Alpha，模糊度滑条控制 GPU 模糊半径。
-- [ ] 保留浅色、深色、主题色和无 GPU 回退效果。
+- [x] 透明度滑条控制材质 Alpha，模糊度滑条即时更新窗口合成材质。
+- [x] 保留浅色、深色、主题色和无 GPU 回退效果。
 
 ### Phase 5：输入、选择和编辑迁移
 

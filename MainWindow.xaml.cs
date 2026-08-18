@@ -124,7 +124,8 @@ public partial class MainWindow : Window
         SetBrush("GlassBrushStrong", dark ? Color.FromRgb(42, 46, 59) : Colors.White, appearance.GlassOpacity / 100d * .34);
         SetBrush("ToolbarGlassBrush", dark ? Color.FromRgb(37, 41, 53) : Colors.White, appearance.GlassOpacity / 100d * .18);
         SetBrush("BorderBrush", dark ? Color.FromRgb(83, 89, 106) : Color.FromRgb(205, 210, 223), .58);
-        SetBrush("HoverBrush", Mix(accent, dark ? Color.FromRgb(38, 42, 54) : Colors.White, dark ? .24 : .14));
+        Color hover = Mix(accent, dark ? Color.FromRgb(38, 42, 54) : Colors.White, dark ? .24 : .14);
+        SetBrush("HoverBrush", hover); SetBrush("HoverForeground", GetContrastingTextColor(hover));
         SetBrush("MutedBrush", dark ? Color.FromRgb(165, 171, 190) : Color.FromRgb(125, 132, 153));
         SetBrush("CanvasBrush", dark ? Color.FromRgb(24, 27, 36) : Color.FromRgb(250, 250, 252));
         SetBrush("GridBrush", dark ? Color.FromRgb(66, 72, 88) : Color.FromRgb(203, 208, 219));
@@ -839,6 +840,7 @@ public partial class MainWindow : Window
         }
         else if (tool == ToolKind.Select && e.ChangedButton == MouseButton.Left && ReferenceEquals(e.OriginalSource, BoardCanvas))
         {
+            BoardCanvas.Select(new StrokeCollection(), []);
             isMarqueeSelecting = true; selectionStart = e.GetPosition(Viewport); SelectionMarquee.Width = SelectionMarquee.Height = 0;
             SelectionMarquee.Margin = new Thickness(selectionStart.X, selectionStart.Y, 0, 0); SelectionMarquee.Visibility = Visibility.Visible;
             Viewport.CaptureMouse(); e.Handled = true;
@@ -1045,6 +1047,17 @@ public partial class MainWindow : Window
     private string GetFontFamily() => (FontFamilyBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Microsoft YaHei UI";
     private void FontFamilyBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (!IsLoaded) return; RecordUndo(); foreach (var t in SelectedTexts()) t.FontFamily = new FontFamily(GetFontFamily()); SaveCurrentBoard(); }
     private void FontSizeBox_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (!IsLoaded) return; RecordUndo(); foreach (var t in SelectedTexts()) t.FontSize = GetFontSize(); SaveCurrentBoard(); }
+    private void ToolbarComboBox_MouseEnter(object sender, MouseEventArgs e) => UpdateToolbarComboBoxForeground(sender as ComboBox);
+    private void ToolbarComboBox_MouseLeave(object sender, MouseEventArgs e) => UpdateToolbarComboBoxForeground(sender as ComboBox);
+    private void ToolbarComboBox_DropDownOpened(object sender, EventArgs e) => UpdateToolbarComboBoxForeground(sender as ComboBox);
+    private void ToolbarComboBox_DropDownClosed(object sender, EventArgs e) => UpdateToolbarComboBoxForeground(sender as ComboBox);
+    private void UpdateToolbarComboBoxForeground(ComboBox? comboBox)
+    {
+        if (comboBox is null) return;
+        comboBox.Foreground = comboBox.IsMouseOver || comboBox.IsDropDownOpen
+            ? (Brush)FindResource("PrimaryForeground")
+            : (Brush)FindResource("TextBrush");
+    }
     private void Bold_Click(object sender, RoutedEventArgs e) { RecordUndo(); foreach (var t in SelectedTexts()) t.FontWeight = t.FontWeight == FontWeights.Bold ? FontWeights.Normal : FontWeights.Bold; SaveCurrentBoard(); }
     private void Italic_Click(object sender, RoutedEventArgs e) { RecordUndo(); foreach (var t in SelectedTexts()) t.FontStyle = t.FontStyle == FontStyles.Italic ? FontStyles.Normal : FontStyles.Italic; SaveCurrentBoard(); }
     private void Underline_Click(object sender, RoutedEventArgs e) { RecordUndo(); foreach (var t in SelectedTexts()) t.TextDecorations = t.TextDecorations == TextDecorations.Underline ? null : TextDecorations.Underline; SaveCurrentBoard(); }

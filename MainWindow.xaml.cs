@@ -449,6 +449,7 @@ public partial class MainWindow : Window
         {
             Width = Viewport.ActualWidth,
             Height = Viewport.ActualHeight,
+            Visibility = Visibility.Hidden,
             IsHitTestVisible = false,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top

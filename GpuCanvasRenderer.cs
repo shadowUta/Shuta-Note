@@ -144,6 +144,36 @@ public sealed class GpuCanvasRenderer : IDisposable
         return TryInitialize() && TryCreateSurface(width, height);
     }
 
+    public bool RenderStrokeSegments(IReadOnlyList<PointData> points, string color, double width,
+        double zoom, double offsetX, double offsetY)
+    {
+        if (target is null || points.Count < 2) return false;
+        try
+        {
+            target.BeginDraw();
+            target.Transform = Matrix3x2.CreateScale((float)zoom) * Matrix3x2.CreateTranslation((float)-offsetX, (float)-offsetY);
+            using ID2D1SolidColorBrush brush = target.CreateSolidColorBrush(ParseColor(color));
+            float strokeWidth = (float)Math.Max(.5, width);
+            for (int index = 1; index < points.Count; index++)
+            {
+                PointData previous = points[index - 1];
+                PointData current = points[index];
+                target.DrawLine(new Vector2((float)previous.X, (float)previous.Y),
+                    new Vector2((float)current.X, (float)current.Y), brush, strokeWidth, roundStrokeStyle);
+            }
+            target.Transform = Matrix3x2.Identity;
+            target.EndDraw(out _, out _).CheckError();
+            context?.Flush();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            IsDeviceLost = device?.DeviceRemovedReason.Failure == true || ex.HResult == unchecked((int)0x8899000C);
+            Status = $"增量笔迹绘制失败 · {ex.Message}";
+            return false;
+        }
+    }
+
     private void DrawStroke(CanvasStroke stroke)
     {
         if (target is null || stroke.Points.Count == 0) return;

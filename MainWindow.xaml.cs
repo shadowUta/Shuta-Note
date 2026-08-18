@@ -46,6 +46,7 @@ public partial class MainWindow : Window
     private Stroke? activeStroke;
     private readonly List<StylusPoint> pendingStrokePoints = [];
     private bool strokeFrameSubscribed;
+    private StylusPoint? gpuStrokeLastPoint;
     private Point startPoint, panStart, selectionStart, rotationCenter, elementDragStart;
     private double panHorizontal, panVertical, zoom = 1;
     private bool isPanning, isMarqueeSelecting, isRotating, isDraggingElements, isColorPicking, colorPreviewStarted, isThemeColorPicking, restoring, appearanceReady;
@@ -483,7 +484,7 @@ public partial class MainWindow : Window
     {
         if (tool == ToolKind.Pen)
         {
-            RecordUndo(); BeginLiveWpfPreview();
+            RecordUndo();
             Point point = e.GetPosition(BoardCanvas);
             activeStroke = new Stroke(new StylusPointCollection([new StylusPoint(point.X, point.Y)]))
             {
@@ -492,6 +493,7 @@ public partial class MainWindow : Window
             activeStroke.DrawingAttributes.FitToCurve = false;
             BoardCanvas.Strokes.Add(activeStroke);
             pendingStrokePoints.Clear();
+            gpuStrokeLastPoint = activeStroke.StylusPoints[0];
             SubscribeStrokeFrame();
             BoardCanvas.CaptureMouse();
             e.Handled = true;
@@ -513,6 +515,7 @@ public partial class MainWindow : Window
             QueueStrokePoint(e.GetPosition(BoardCanvas));
             FlushStrokePoints();
             activeStroke = null;
+            gpuStrokeLastPoint = null;
             pendingStrokePoints.Clear();
             UnsubscribeStrokeFrame();
             BoardCanvas.ReleaseMouseCapture();
@@ -572,6 +575,15 @@ public partial class MainWindow : Window
     private void FlushStrokePoints()
     {
         if (activeStroke is null || pendingStrokePoints.Count == 0) return;
+        if (gpuCanvasHost?.IsReady == true && gpuStrokeLastPoint is StylusPoint previous)
+        {
+            var segments = new List<PointData>(pendingStrokePoints.Count + 1) { new(previous.X, previous.Y) };
+            segments.AddRange(pendingStrokePoints.Select(point => new PointData(point.X, point.Y)));
+            if (gpuCanvas.RenderStrokeSegments(segments, activeStroke.DrawingAttributes.Color.ToString(),
+                activeStroke.DrawingAttributes.Width, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset))
+                gpuCanvasHost.InvalidateSurface();
+            gpuStrokeLastPoint = pendingStrokePoints[^1];
+        }
         activeStroke.StylusPoints.Add(new StylusPointCollection(pendingStrokePoints));
         pendingStrokePoints.Clear();
     }

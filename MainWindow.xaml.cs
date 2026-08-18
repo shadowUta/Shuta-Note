@@ -52,10 +52,15 @@ public partial class MainWindow : Window
     private bool strokeFrameSubscribed;
     private StylusPoint? gpuStrokeLastPoint;
     private Point startPoint, panStart, selectionStart, rotationCenter, elementDragStart;
+    private Point resizeStart, resizeAnchor;
     private double panHorizontal, panVertical, zoom = 1;
-    private bool isPanning, isMarqueeSelecting, isRotating, isDraggingElements, isColorPicking, colorPreviewStarted, isThemeColorPicking, restoring, appearanceReady;
+    private bool isPanning, isMarqueeSelecting, isRotating, isResizing, isDraggingElements, isColorPicking, colorPreviewStarted, isThemeColorPicking, restoring, appearanceReady;
     private double rotationStartAngle, shapeStartRotation, colorSaturation = 1, colorValue = 1;
     private Shape? rotatingShape;
+    private UIElement? resizingElement;
+    private TextBox? editingText;
+    private ResizeCorner resizeCorner;
+    private double resizeLeft, resizeTop, resizeWidth, resizeHeight, resizeLineX1, resizeLineY1, resizeLineX2, resizeLineY2;
     private readonly List<(UIElement Element, double Left, double Top)> draggedElements = [];
     private bool focusMode, sidebarCollapsed;
     private Color activeColor = Color.FromRgb(72, 65, 189);
@@ -598,7 +603,7 @@ public partial class MainWindow : Window
         if (tool == ToolKind.Text)
         {
             var text = CreateTextBox(new ElementData { Text = "输入文字", Width = 220, Height = 70, FontSize = GetFontSize(), FontFamily = GetFontFamily(), Color = activeColor.ToString() });
-            AddElement(text, startPoint.X, startPoint.Y); text.Focus(); text.SelectAll(); SetTool(ToolKind.Select); SaveCurrentBoard(); e.Handled = true; return;
+            AddElement(text, startPoint.X, startPoint.Y); editingText = text; text.IsReadOnly = false; text.Focus(); text.SelectAll(); SetTool(ToolKind.Select); SaveCurrentBoard(); e.Handled = true; return;
         }
         drawingShape = CreateShape(tool.ToString(), 1, 1, activeColor); AddElement(drawingShape, startPoint.X, startPoint.Y); BoardCanvas.CaptureMouse(); e.Handled = true;
     }
@@ -630,9 +635,9 @@ public partial class MainWindow : Window
     }
     private TextBox CreateTextBox(ElementData item)
     {
-        var text = new TextBox { Text = item.Text ?? "", Width = item.Width, Height = item.Height, FontSize = item.FontSize <= 0 ? 18 : item.FontSize, FontFamily = new FontFamily(item.FontFamily ?? "Microsoft YaHei UI"), Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Color ?? "#1C2033")), FontWeight = item.Bold ? FontWeights.Bold : FontWeights.Normal, FontStyle = item.Italic ? FontStyles.Italic : FontStyles.Normal, TextDecorations = item.Underline ? TextDecorations.Underline : null, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new Thickness(1), BorderBrush = Brushes.Transparent, Background = Brushes.Transparent, Padding = new Thickness(5) };
+        var text = new TextBox { Text = item.Text ?? "", Width = item.Width, Height = item.Height, FontSize = item.FontSize <= 0 ? 18 : item.FontSize, FontFamily = new FontFamily(item.FontFamily ?? "Microsoft YaHei UI"), Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Color ?? "#1C2033")), FontWeight = item.Bold ? FontWeights.Bold : FontWeights.Normal, FontStyle = item.Italic ? FontStyles.Italic : FontStyles.Normal, TextDecorations = item.Underline ? TextDecorations.Underline : null, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, IsReadOnly = true, IsReadOnlyCaretVisible = false, BorderThickness = new Thickness(1), BorderBrush = Brushes.Transparent, Background = Brushes.Transparent, Padding = new Thickness(5) };
         text.GotFocus += (_, _) => { text.BorderBrush = new SolidColorBrush(Color.FromRgb(102, 87, 232)); };
-        text.LostFocus += (_, _) => { text.BorderBrush = Brushes.Transparent; SaveCurrentBoard(); }; return text;
+        text.LostFocus += (_, _) => { text.BorderBrush = Brushes.Transparent; text.IsReadOnly = true; if (ReferenceEquals(editingText, text)) editingText = null; SaveCurrentBoard(); }; return text;
     }
     private void AddElement(UIElement element, double x, double y) { InkCanvas.SetLeft(element, x); InkCanvas.SetTop(element, y); BoardCanvas.Children.Add(element); }
     private void BoardCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)
@@ -693,6 +698,7 @@ public partial class MainWindow : Window
         if (bounds.IsEmpty || tool != ToolKind.Select)
         {
             SelectedElementOutline.Visibility = Visibility.Collapsed;
+            ResizeOverlay.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -717,8 +723,57 @@ public partial class MainWindow : Window
                 SelectedElementOutline.RenderTransform = Transform.Identity;
             }
             SelectedElementOutline.Visibility = Visibility.Visible;
+            UpdateResizeHandles();
         }
         UpdateRotationHandle();
+    }
+
+    private void UpdateResizeHandles()
+    {
+        UIElement? element = BoardCanvas.GetSelectedElements().Count == 1 && BoardCanvas.GetSelectedStrokes().Count == 0 ? BoardCanvas.GetSelectedElements()[0] : null;
+        if (element is not FrameworkElement framework || framework.ActualWidth <= 0 || framework.ActualHeight <= 0 || tool != ToolKind.Select)
+        {
+            ResizeOverlay.Visibility = Visibility.Collapsed;
+            return;
+        }
+        SetResizeHandlePosition(ResizeTopLeft, framework.TranslatePoint(new Point(0, 0), Viewport));
+        SetResizeHandlePosition(ResizeTopRight, framework.TranslatePoint(new Point(framework.ActualWidth, 0), Viewport));
+        SetResizeHandlePosition(ResizeBottomLeft, framework.TranslatePoint(new Point(0, framework.ActualHeight), Viewport));
+        SetResizeHandlePosition(ResizeBottomRight, framework.TranslatePoint(new Point(framework.ActualWidth, framework.ActualHeight), Viewport));
+        ResizeOverlay.Visibility = Visibility.Visible;
+    }
+
+    private static void SetResizeHandlePosition(FrameworkElement handle, Point point)
+    {
+        Canvas.SetLeft(handle, point.X - handle.Width / 2);
+        Canvas.SetTop(handle, point.Y - handle.Height / 2);
+    }
+
+    private void ResizeHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        resizingElement = BoardCanvas.GetSelectedElements().Count == 1 ? BoardCanvas.GetSelectedElements()[0] : null;
+        if (resizingElement is not FrameworkElement element || sender is not FrameworkElement { Tag: string cornerName } || !Enum.TryParse(cornerName, out resizeCorner)) return;
+        RecordUndo();
+        isResizing = true;
+        resizeStart = e.GetPosition(BoardCanvas);
+        resizeLeft = GetCanvasCoordinate(resizingElement, true);
+        resizeTop = GetCanvasCoordinate(resizingElement, false);
+        resizeWidth = element.ActualWidth;
+        resizeHeight = element.ActualHeight;
+        Point anchorLocal = resizeCorner switch
+        {
+            ResizeCorner.TopLeft => new Point(resizeWidth, resizeHeight),
+            ResizeCorner.TopRight => new Point(0, resizeHeight),
+            ResizeCorner.BottomLeft => new Point(resizeWidth, 0),
+            _ => new Point(0, 0)
+        };
+        resizeAnchor = element.TranslatePoint(anchorLocal, BoardCanvas);
+        if (element is Line line)
+        {
+            resizeLineX1 = line.X1; resizeLineY1 = line.Y1; resizeLineX2 = line.X2; resizeLineY2 = line.Y2;
+        }
+        Viewport.CaptureMouse();
+        e.Handled = true;
     }
     private void HideNativeSelectionAdorner()
     {
@@ -751,7 +806,25 @@ public partial class MainWindow : Window
 
     private void Viewport_MouseDown(object sender, MouseButtonEventArgs e)
     {
+        TextBox? clickedText = FindParentTextBox(e.OriginalSource as DependencyObject);
+        if (e.ChangedButton == MouseButton.Left && editingText is not null && !ReferenceEquals(editingText, clickedText))
+        {
+            editingText.IsReadOnly = true;
+            editingText = null;
+            Viewport.Focus();
+        }
         if (e.ChangedButton == MouseButton.Middle) { isPanning = true; panStart = e.GetPosition(Viewport); panHorizontal = CanvasScroll.HorizontalOffset; panVertical = CanvasScroll.VerticalOffset; coordinateTransform.SetViewport(zoom, -panHorizontal, -panVertical); Viewport.CaptureMouse(); e.Handled = true; }
+        else if (tool == ToolKind.Select && e.ChangedButton == MouseButton.Left && clickedText is TextBox text && (e.ClickCount >= 2 || ReferenceEquals(editingText, text)))
+        {
+            if (!ReferenceEquals(editingText, text))
+            {
+                editingText?.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                editingText = text;
+                text.IsReadOnly = false;
+                BoardCanvas.Select(new StrokeCollection(), new List<UIElement> { text });
+                text.Focus();
+            }
+        }
         else if (tool == ToolKind.Select && e.ChangedButton == MouseButton.Left && TrySelectElement(e.OriginalSource as DependencyObject))
         {
             if (!IsInsideSelectedElements(e.GetPosition(BoardCanvas))) { e.Handled = true; return; }
@@ -765,6 +838,15 @@ public partial class MainWindow : Window
             SelectionMarquee.Margin = new Thickness(selectionStart.X, selectionStart.Y, 0, 0); SelectionMarquee.Visibility = Visibility.Visible;
             Viewport.CaptureMouse(); e.Handled = true;
         }
+    }
+    private static TextBox? FindParentTextBox(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is TextBox text) return text;
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return null;
     }
     private bool TrySelectElement(DependencyObject? source)
     {
@@ -795,6 +877,34 @@ public partial class MainWindow : Window
             Point mouse = e.GetPosition(Viewport); double angle = Math.Atan2(mouse.Y - rotationCenter.Y, mouse.X - rotationCenter.X) * 180 / Math.PI;
             rotatingShape.RenderTransformOrigin = new Point(.5, .5); rotatingShape.RenderTransform = new RotateTransform(shapeStartRotation + angle - rotationStartAngle); UpdateSelectionVisuals(); ScheduleInteractiveDocumentRender(); e.Handled = true; return;
         }
+        if (isResizing && resizingElement is FrameworkElement element && e.LeftButton == MouseButtonState.Pressed)
+        {
+            Point current = e.GetPosition(BoardCanvas);
+            Vector delta = current - resizeStart;
+            double angle = GetRotation(resizingElement) * Math.PI / 180;
+            Vector localDelta = new(delta.X * Math.Cos(angle) + delta.Y * Math.Sin(angle), -delta.X * Math.Sin(angle) + delta.Y * Math.Cos(angle));
+            bool left = resizeCorner is ResizeCorner.TopLeft or ResizeCorner.BottomLeft;
+            bool top = resizeCorner is ResizeCorner.TopLeft or ResizeCorner.TopRight;
+            double width = Math.Max(24, resizeWidth + (left ? -localDelta.X : localDelta.X));
+            double height = Math.Max(24, resizeHeight + (top ? -localDelta.Y : localDelta.Y));
+            element.Width = width; element.Height = height;
+            if (element is Line line)
+            {
+                line.X1 = resizeLineX1 * width / Math.Max(1, resizeWidth); line.Y1 = resizeLineY1 * height / Math.Max(1, resizeHeight);
+                line.X2 = resizeLineX2 * width / Math.Max(1, resizeWidth); line.Y2 = resizeLineY2 * height / Math.Max(1, resizeHeight);
+            }
+            Point anchorLocal = resizeCorner switch
+            {
+                ResizeCorner.TopLeft => new Point(width, height),
+                ResizeCorner.TopRight => new Point(0, height),
+                ResizeCorner.BottomLeft => new Point(width, 0),
+                _ => new Point(0, 0)
+            };
+            Point movedAnchor = element.TranslatePoint(anchorLocal, BoardCanvas);
+            InkCanvas.SetLeft(element, GetCanvasCoordinate(element, true) + resizeAnchor.X - movedAnchor.X);
+            InkCanvas.SetTop(element, GetCanvasCoordinate(element, false) + resizeAnchor.Y - movedAnchor.Y);
+            UpdateSelectionVisuals(); ScheduleInteractiveDocumentRender(); e.Handled = true; return;
+        }
         if (isPanning) { Point p = e.GetPosition(Viewport); CanvasScroll.ScrollToHorizontalOffset(panHorizontal - (p.X - panStart.X)); CanvasScroll.ScrollToVerticalOffset(panVertical - (p.Y - panStart.Y)); coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset); ScheduleViewportRender(); e.Handled = true; return; }
         if (isDraggingElements && e.LeftButton == MouseButtonState.Pressed)
         {
@@ -818,6 +928,7 @@ public partial class MainWindow : Window
     private void Viewport_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (isRotating) { isRotating = false; rotatingShape = null; Viewport.ReleaseMouseCapture(); UpdateRotationHandle(); SaveCurrentBoard(); e.Handled = true; return; }
+        if (isResizing) { isResizing = false; resizingElement = null; Viewport.ReleaseMouseCapture(); UpdateSelectionVisuals(); SaveCurrentBoard(); e.Handled = true; return; }
         if (isPanning) { isPanning = false; Viewport.ReleaseMouseCapture(); e.Handled = true; return; }
         if (isDraggingElements)
         {
@@ -1140,6 +1251,7 @@ public partial class MainWindow : Window
 }
 
 public enum ToolKind { Select, Pen, Text, Rectangle, Ellipse, Arrow }
+public enum ResizeCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 public sealed class BoardInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public DateTime UpdatedAt { get; set; } public override string ToString() => Name; }
 public sealed class AppearanceSettings
 {

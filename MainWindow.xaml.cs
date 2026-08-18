@@ -37,6 +37,8 @@ public partial class MainWindow : Window
     private D3DImageCanvasHost? gpuCanvasHost;
     private bool rebuildingGpuBackend;
     private bool liveWpfPreview;
+    private bool viewportRenderQueued;
+    private CanvasDocument? renderedDocument;
     private HwndSource? windowSource;
     private BoardInfo? currentBoard;
     private ToolKind tool;
@@ -157,13 +159,15 @@ public partial class MainWindow : Window
 
         if (gpuDevice.TryInitialize())
         {
-            if (gpuCanvas.TryInitialize() && gpuCanvas.TryCreateSurface(5000, 3500))
+            int surfaceWidth = Math.Max(1, (int)Math.Ceiling(Viewport.ActualWidth));
+            int surfaceHeight = Math.Max(1, (int)Math.Ceiling(Viewport.ActualHeight));
+            if (gpuCanvas.TryInitialize() && gpuCanvas.TryCreateSurface(surfaceWidth, surfaceHeight))
             {
-                gpuCanvasHost = new D3DImageCanvasHost { Width = 5000, Height = 3500, IsHitTestVisible = false };
-                if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, 5000, 3500, gpuCanvas.SharedHandle))
+                gpuCanvasHost = new D3DImageCanvasHost { Width = surfaceWidth, Height = surfaceHeight, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+                if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, surfaceWidth, surfaceHeight, gpuCanvas.SharedHandle))
                 {
-                    CanvasHostGrid.Children.Insert(0, gpuCanvasHost);
-                    Panel.SetZIndex(gpuCanvasHost, -10);
+                    Viewport.Children.Insert(1, gpuCanvasHost);
+                    Panel.SetZIndex(gpuCanvasHost, 1);
                     BoardCanvas.Opacity = 0;
                     RenderGpuDocument();
                     UpdateGpuDiagnostics();
@@ -226,7 +230,7 @@ public partial class MainWindow : Window
         else if (message == WmExitSizeMove)
         {
             ApplySystemBackdrop();
-            if (gpuCanvasHost is not null && !liveWpfPreview) gpuCanvasHost.Visibility = Visibility.Visible;
+            if (gpuCanvasHost is not null && !liveWpfPreview) TryRebuildGpuBackend();
         }
         return IntPtr.Zero;
     }
@@ -361,8 +365,9 @@ public partial class MainWindow : Window
     }
     private void RenderGpuDocument(CanvasDocument document)
     {
+        renderedDocument = document;
         if (gpuCanvasHost?.IsReady != true) return;
-        if (gpuCanvas.Render(document, appearance.DarkMode)) gpuCanvasHost.InvalidateSurface();
+        if (gpuCanvas.Render(document, appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset)) gpuCanvasHost.InvalidateSurface();
         else if (!rebuildingGpuBackend && gpuCanvas.IsDeviceLost && TryRebuildGpuBackend()) return;
         else if (renderOptions.EnableGpuFallback)
         {
@@ -371,26 +376,39 @@ public partial class MainWindow : Window
         UpdateGpuDiagnostics();
     }
 
+    private void ScheduleViewportRender()
+    {
+        if (viewportRenderQueued || liveWpfPreview || renderedDocument is null || gpuCanvasHost?.IsReady != true) return;
+        viewportRenderQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            viewportRenderQueued = false;
+            if (!liveWpfPreview && renderedDocument is not null) RenderGpuDocument(renderedDocument);
+        }, DispatcherPriority.Render);
+    }
+
     private bool TryRebuildGpuBackend()
     {
         rebuildingGpuBackend = true;
         try
         {
             gpuCanvasHost?.Dispose();
-            if (gpuCanvasHost is not null) CanvasHostGrid.Children.Remove(gpuCanvasHost);
+            if (gpuCanvasHost is not null) Viewport.Children.Remove(gpuCanvasHost);
             gpuCanvasHost = null;
-            if (!gpuCanvas.TryRebuildSurface(5000, 3500)) return false;
-            var replacement = new D3DImageCanvasHost { Width = 5000, Height = 3500, IsHitTestVisible = false };
-            if (!replacement.TryInitialize(new WindowInteropHelper(this).Handle, 5000, 3500, gpuCanvas.SharedHandle))
+            int surfaceWidth = Math.Max(1, (int)Math.Ceiling(Viewport.ActualWidth));
+            int surfaceHeight = Math.Max(1, (int)Math.Ceiling(Viewport.ActualHeight));
+            if (!gpuCanvas.TryRebuildSurface(surfaceWidth, surfaceHeight)) return false;
+            var replacement = new D3DImageCanvasHost { Width = surfaceWidth, Height = surfaceHeight, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+            if (!replacement.TryInitialize(new WindowInteropHelper(this).Handle, surfaceWidth, surfaceHeight, gpuCanvas.SharedHandle))
             {
                 replacement.Dispose();
                 return false;
             }
             gpuCanvasHost = replacement;
-            CanvasHostGrid.Children.Insert(0, replacement);
-            Panel.SetZIndex(replacement, -10);
+            Viewport.Children.Insert(1, replacement);
+            Panel.SetZIndex(replacement, 1);
             BoardCanvas.Opacity = 0;
-            if (!gpuCanvas.Render(CaptureDocument(), appearance.DarkMode)) return false;
+            if (!gpuCanvas.Render(CaptureDocument(), appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset)) return false;
             replacement.InvalidateSurface();
             HintText.Text = "GPU 设备已重建";
             return true;
@@ -407,7 +425,7 @@ public partial class MainWindow : Window
     {
         BoardCanvas.Opacity = 1;
         gpuCanvasHost?.Dispose();
-        if (gpuCanvasHost is not null) CanvasHostGrid.Children.Remove(gpuCanvasHost);
+        if (gpuCanvasHost is not null) Viewport.Children.Remove(gpuCanvasHost);
         gpuCanvasHost = null;
         HintText.Text = message;
     }
@@ -618,7 +636,7 @@ public partial class MainWindow : Window
             Point mouse = e.GetPosition(Viewport); double angle = Math.Atan2(mouse.Y - rotationCenter.Y, mouse.X - rotationCenter.X) * 180 / Math.PI;
             rotatingShape.RenderTransformOrigin = new Point(.5, .5); rotatingShape.RenderTransform = new RotateTransform(shapeStartRotation + angle - rotationStartAngle); UpdateSelectionVisuals(); e.Handled = true; return;
         }
-        if (isPanning) { Point p = e.GetPosition(Viewport); CanvasScroll.ScrollToHorizontalOffset(panHorizontal - (p.X - panStart.X)); CanvasScroll.ScrollToVerticalOffset(panVertical - (p.Y - panStart.Y)); coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset); e.Handled = true; return; }
+        if (isPanning) { Point p = e.GetPosition(Viewport); CanvasScroll.ScrollToHorizontalOffset(panHorizontal - (p.X - panStart.X)); CanvasScroll.ScrollToVerticalOffset(panVertical - (p.Y - panStart.Y)); coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset); ScheduleViewportRender(); e.Handled = true; return; }
         if (isDraggingElements && e.LeftButton == MouseButtonState.Pressed)
         {
             Point current = e.GetPosition(BoardCanvas); Vector delta = current - elementDragStart;
@@ -685,6 +703,7 @@ public partial class MainWindow : Window
         CanvasScroll.UpdateLayout();
         CanvasScroll.ScrollToHorizontalOffset(canvasPoint.X * zoom - viewportPoint.X);
         CanvasScroll.ScrollToVerticalOffset(canvasPoint.Y * zoom - viewportPoint.Y);
+        ScheduleViewportRender();
         UpdateGridHighlight(canvasPoint);
         UpdateRotationHandle();
         e.Handled = true;
@@ -695,6 +714,7 @@ public partial class MainWindow : Window
         coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset);
         if (BoardCanvas.Parent is FrameworkElement host) host.LayoutTransform = new ScaleTransform(zoom, zoom);
         ZoomText.Text = FocusZoomText.Text = $"{zoom:P0}";
+        ScheduleViewportRender();
         UpdateGpuDiagnostics();
     }
     private void UpdateGpuDiagnostics()

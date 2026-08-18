@@ -30,6 +30,7 @@ public sealed class GpuCanvasRenderer : IDisposable
     private ID2D1RenderTarget? target;
     private IDWriteFactory? writeFactory;
     private ID2D1StrokeStyle? roundStrokeStyle;
+    private readonly Dictionary<string, ID2D1Bitmap> imageCache = [];
     private int pixelWidth;
     private int pixelHeight;
 
@@ -99,7 +100,7 @@ public sealed class GpuCanvasRenderer : IDisposable
         }
     }
 
-    public bool Render(CanvasDocument document, bool darkMode)
+    public bool Render(CanvasDocument document, bool darkMode, double zoom = 1, double offsetX = 0, double offsetY = 0)
     {
         if (target is null || writeFactory is null) return false;
         try
@@ -108,14 +109,21 @@ public sealed class GpuCanvasRenderer : IDisposable
             Color4 gridColor = darkMode ? Rgba(66, 72, 88, .72f) : Rgba(203, 208, 219, .78f);
             target.BeginDraw();
             target.Clear(background);
+            Matrix3x2 viewportTransform = Matrix3x2.CreateScale((float)zoom) * Matrix3x2.CreateTranslation((float)-offsetX, (float)-offsetY);
+            target.Transform = viewportTransform;
             using (ID2D1SolidColorBrush grid = target.CreateSolidColorBrush(gridColor))
             {
-                for (int x = 0; x <= pixelWidth; x += 24) target.DrawLine(new Vector2(x, 0), new Vector2(x, pixelHeight), grid, .65f);
-                for (int y = 0; y <= pixelHeight; y += 24) target.DrawLine(new Vector2(0, y), new Vector2(pixelWidth, y), grid, .65f);
+                double left = offsetX / zoom, top = offsetY / zoom;
+                double right = (offsetX + pixelWidth) / zoom, bottom = (offsetY + pixelHeight) / zoom;
+                int firstX = Math.Max(0, (int)Math.Floor(left / 24) * 24);
+                int firstY = Math.Max(0, (int)Math.Floor(top / 24) * 24);
+                for (int x = firstX; x <= Math.Min(5000, right); x += 24) target.DrawLine(new Vector2(x, (float)Math.Max(0, top)), new Vector2(x, (float)Math.Min(3500, bottom)), grid, .65f);
+                for (int y = firstY; y <= Math.Min(3500, bottom); y += 24) target.DrawLine(new Vector2((float)Math.Max(0, left), y), new Vector2((float)Math.Min(5000, right), y), grid, .65f);
             }
 
             foreach (CanvasStroke stroke in document.Strokes) DrawStroke(stroke);
             foreach (CanvasElement element in document.Elements.OrderBy(item => item.Z)) DrawElement(element);
+            target.Transform = Matrix3x2.Identity;
             target.EndDraw(out _, out _).CheckError();
             context?.Flush();
             if (device?.DeviceRemovedReason.Failure == true) device.DeviceRemovedReason.CheckError();
@@ -195,6 +203,11 @@ public sealed class GpuCanvasRenderer : IDisposable
         if (target is null) return;
         try
         {
+            if (imageCache.TryGetValue(encodedImage, out ID2D1Bitmap? cached))
+            {
+                target.DrawBitmap(cached, bounds, 1f, BitmapInterpolationMode.Linear, new Rect(0, 0, cached.PixelSize.Width, cached.PixelSize.Height));
+                return;
+            }
             byte[] bytes = Convert.FromBase64String(encodedImage);
             using MemoryStream stream = new(bytes);
             BitmapDecoder decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
@@ -208,7 +221,8 @@ public sealed class GpuCanvasRenderer : IDisposable
             {
                 Marshal.Copy(pixels, 0, data, pixels.Length);
                 BitmapProperties properties = new(new D2DPixelFormat(DxgiFormat.B8G8R8A8_UNorm, D2DAlphaMode.Premultiplied));
-                using ID2D1Bitmap bitmap = target.CreateBitmap(new SizeI(converted.PixelWidth, converted.PixelHeight), data, (uint)stride, properties);
+                ID2D1Bitmap bitmap = target.CreateBitmap(new SizeI(converted.PixelWidth, converted.PixelHeight), data, (uint)stride, properties);
+                imageCache[encodedImage] = bitmap;
                 target.DrawBitmap(bitmap, bounds, 1f, BitmapInterpolationMode.Linear, new Rect(0, 0, converted.PixelWidth, converted.PixelHeight));
             }
             finally { Marshal.FreeHGlobal(data); }
@@ -251,6 +265,8 @@ public sealed class GpuCanvasRenderer : IDisposable
 
     private void DisposeSurface()
     {
+        foreach (ID2D1Bitmap bitmap in imageCache.Values) bitmap.Dispose();
+        imageCache.Clear();
         target?.Dispose();
         dxgiSurface?.Dispose();
         texture?.Dispose();

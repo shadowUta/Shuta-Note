@@ -105,13 +105,16 @@ public sealed class GpuCanvasRenderer : IDisposable
         if (target is null || writeFactory is null) return false;
         try
         {
-            Color4 background = darkMode ? Rgba(24, 27, 36) : Rgba(250, 250, 252);
+            Color4 viewportBackground = darkMode ? Rgba(13, 16, 23) : Rgba(228, 232, 241);
+            Color4 canvasBackground = darkMode ? Rgba(24, 27, 36) : Rgba(250, 250, 252);
             Color4 gridColor = darkMode ? Rgba(66, 72, 88, .72f) : Rgba(203, 208, 219, .78f);
             target.BeginDraw();
-            target.Clear(background);
+            target.Clear(viewportBackground);
             float pixelScale = (float)(zoom * dpiScale);
             Matrix3x2 viewportTransform = Matrix3x2.CreateScale(pixelScale) * Matrix3x2.CreateTranslation((float)(-offsetX * dpiScale), (float)(-offsetY * dpiScale));
             target.Transform = viewportTransform;
+            using (ID2D1SolidColorBrush canvas = target.CreateSolidColorBrush(canvasBackground))
+                target.FillRectangle(new Rect(0, 0, 5000, 3500), canvas);
             using (ID2D1SolidColorBrush grid = target.CreateSolidColorBrush(gridColor))
             {
                 double left = offsetX / zoom, top = offsetY / zoom;

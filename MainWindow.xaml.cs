@@ -36,8 +36,8 @@ public partial class MainWindow : Window
     private string? pendingBoardPath, pendingBoardJson, pendingIndexJson;
     private D3DImageCanvasHost? gpuCanvasHost;
     private bool rebuildingGpuBackend;
-    private bool liveWpfPreview;
     private bool viewportRenderQueued;
+    private bool interactiveRenderQueued;
     private CanvasDocument? renderedDocument;
     private double viewportDpiScale = 1;
     private HwndSource? windowSource;
@@ -234,7 +234,7 @@ public partial class MainWindow : Window
         else if (message == WmExitSizeMove)
         {
             ApplySystemBackdrop();
-            if (gpuCanvasHost is not null && !liveWpfPreview) TryRebuildGpuBackend();
+            if (gpuCanvasHost is not null) TryRebuildGpuBackend();
         }
         return IntPtr.Zero;
     }
@@ -382,12 +382,23 @@ public partial class MainWindow : Window
 
     private void ScheduleViewportRender()
     {
-        if (viewportRenderQueued || liveWpfPreview || renderedDocument is null || gpuCanvasHost?.IsReady != true) return;
+        if (viewportRenderQueued || renderedDocument is null || gpuCanvasHost?.IsReady != true) return;
         viewportRenderQueued = true;
         Dispatcher.BeginInvoke(() =>
         {
             viewportRenderQueued = false;
-            if (!liveWpfPreview && renderedDocument is not null) RenderGpuDocument(renderedDocument);
+            if (renderedDocument is not null) RenderGpuDocument(renderedDocument);
+        }, DispatcherPriority.Render);
+    }
+
+    private void ScheduleInteractiveDocumentRender()
+    {
+        if (interactiveRenderQueued || gpuCanvasHost?.IsReady != true) return;
+        interactiveRenderQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            interactiveRenderQueued = false;
+            if (gpuCanvasHost?.IsReady == true) RenderGpuDocument(CaptureDocument());
         }, DispatcherPriority.Render);
     }
 
@@ -493,8 +504,6 @@ public partial class MainWindow : Window
     private void SetTool(ToolKind next)
     {
         tool = next; BoardCanvas.EditingMode = next == ToolKind.Select ? InkCanvasEditingMode.Select : InkCanvasEditingMode.None;
-        if (next == ToolKind.Pen) BeginLiveWpfPreview();
-        else if (!isDraggingElements && !isRotating && drawingShape is null) EndLiveWpfPreview();
         BoardCanvas.Cursor = next == ToolKind.Text ? Cursors.IBeam : Cursors.Arrow;
         foreach (var button in FindVisualChildren<System.Windows.Controls.Primitives.ToggleButton>(RootGrid).Where(b => b.Tag is string)) button.IsChecked = string.Equals(button.Tag?.ToString(), next.ToString(), StringComparison.Ordinal);
         HintText.Text = next switch { ToolKind.Select => "左键选择图形 · 中键拖动画布 · 右键打开菜单", ToolKind.Pen => "画笔 · 按住鼠标自由绘制", ToolKind.Text => "文字工具 · 点击画布添加文本", _ => $"{next} · 在画布上拖动绘制" };
@@ -525,7 +534,7 @@ public partial class MainWindow : Window
             var text = CreateTextBox(new ElementData { Text = "输入文字", Width = 220, Height = 70, FontSize = GetFontSize(), FontFamily = GetFontFamily(), Color = activeColor.ToString() });
             AddElement(text, startPoint.X, startPoint.Y); text.Focus(); text.SelectAll(); SetTool(ToolKind.Select); SaveCurrentBoard(); e.Handled = true; return;
         }
-        BeginLiveWpfPreview(); drawingShape = CreateShape(tool.ToString(), 1, 1, activeColor); AddElement(drawingShape, startPoint.X, startPoint.Y); BoardCanvas.CaptureMouse(); e.Handled = true;
+        drawingShape = CreateShape(tool.ToString(), 1, 1, activeColor); AddElement(drawingShape, startPoint.X, startPoint.Y); BoardCanvas.CaptureMouse(); e.Handled = true;
     }
     private void BoardCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
@@ -545,7 +554,7 @@ public partial class MainWindow : Window
         }
         if (drawingShape is null) return;
         Shape completedShape = drawingShape; drawingShape = null; BoardCanvas.ReleaseMouseCapture();
-        BoardCanvas.Select(new StrokeCollection(), new List<UIElement> { completedShape }); SaveCurrentBoard(); EndLiveWpfPreview(); SetTool(ToolKind.Select); e.Handled = true;
+        BoardCanvas.Select(new StrokeCollection(), new List<UIElement> { completedShape }); SaveCurrentBoard(); SetTool(ToolKind.Select); e.Handled = true;
     }
     private Shape CreateShape(string type, double width, double height, Color color)
     {
@@ -607,21 +616,6 @@ public partial class MainWindow : Window
         pendingStrokePoints.Clear();
     }
 
-    private void BeginLiveWpfPreview()
-    {
-        if (gpuCanvasHost?.IsReady != true || liveWpfPreview) return;
-        liveWpfPreview = true;
-        gpuCanvasHost.Visibility = Visibility.Hidden;
-        BoardCanvas.Opacity = 1;
-    }
-
-    private void EndLiveWpfPreview()
-    {
-        if (!liveWpfPreview || gpuCanvasHost?.IsReady != true) return;
-        BoardCanvas.Opacity = 0;
-        gpuCanvasHost.Visibility = Visibility.Visible;
-        liveWpfPreview = false;
-    }
     private void BoardCanvas_SelectionChanged(object sender, EventArgs e)
     {
         UpdateSelectionVisuals();
@@ -684,7 +678,7 @@ public partial class MainWindow : Window
     private void RotationHandle_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         rotatingShape = BoardCanvas.GetSelectedElements().OfType<Shape>().SingleOrDefault(); if (rotatingShape is null) return;
-        RecordUndo(); BeginLiveWpfPreview(); isRotating = true; rotationCenter = rotatingShape.TranslatePoint(new Point(rotatingShape.ActualWidth / 2, rotatingShape.ActualHeight / 2), Viewport);
+        RecordUndo(); isRotating = true; rotationCenter = rotatingShape.TranslatePoint(new Point(rotatingShape.ActualWidth / 2, rotatingShape.ActualHeight / 2), Viewport);
         Point mouse = e.GetPosition(Viewport); rotationStartAngle = Math.Atan2(mouse.Y - rotationCenter.Y, mouse.X - rotationCenter.X) * 180 / Math.PI;
         shapeStartRotation = GetRotation(rotatingShape); Viewport.CaptureMouse(); e.Handled = true;
     }
@@ -695,7 +689,7 @@ public partial class MainWindow : Window
         else if (tool == ToolKind.Select && e.ChangedButton == MouseButton.Left && TrySelectElement(e.OriginalSource as DependencyObject))
         {
             if (!IsInsideSelectedElements(e.GetPosition(BoardCanvas))) { e.Handled = true; return; }
-            RecordUndo(); BeginLiveWpfPreview(); isDraggingElements = true; elementDragStart = e.GetPosition(BoardCanvas); draggedElements.Clear();
+            RecordUndo(); isDraggingElements = true; elementDragStart = e.GetPosition(BoardCanvas); draggedElements.Clear();
             foreach (UIElement element in BoardCanvas.GetSelectedElements()) draggedElements.Add((element, GetCanvasCoordinate(element, true), GetCanvasCoordinate(element, false)));
             Viewport.CaptureMouse(); e.Handled = true;
         }
@@ -733,14 +727,14 @@ public partial class MainWindow : Window
         if (isRotating && rotatingShape is not null)
         {
             Point mouse = e.GetPosition(Viewport); double angle = Math.Atan2(mouse.Y - rotationCenter.Y, mouse.X - rotationCenter.X) * 180 / Math.PI;
-            rotatingShape.RenderTransformOrigin = new Point(.5, .5); rotatingShape.RenderTransform = new RotateTransform(shapeStartRotation + angle - rotationStartAngle); UpdateSelectionVisuals(); e.Handled = true; return;
+            rotatingShape.RenderTransformOrigin = new Point(.5, .5); rotatingShape.RenderTransform = new RotateTransform(shapeStartRotation + angle - rotationStartAngle); UpdateSelectionVisuals(); ScheduleInteractiveDocumentRender(); e.Handled = true; return;
         }
         if (isPanning) { Point p = e.GetPosition(Viewport); CanvasScroll.ScrollToHorizontalOffset(panHorizontal - (p.X - panStart.X)); CanvasScroll.ScrollToVerticalOffset(panVertical - (p.Y - panStart.Y)); coordinateTransform.SetViewport(zoom, -CanvasScroll.HorizontalOffset, -CanvasScroll.VerticalOffset); ScheduleViewportRender(); e.Handled = true; return; }
         if (isDraggingElements && e.LeftButton == MouseButtonState.Pressed)
         {
             Point current = e.GetPosition(BoardCanvas); Vector delta = current - elementDragStart;
             foreach (var item in draggedElements) { InkCanvas.SetLeft(item.Element, item.Left + delta.X); InkCanvas.SetTop(item.Element, item.Top + delta.Y); }
-            UpdateSelectionVisuals(); e.Handled = true; return;
+            UpdateSelectionVisuals(); ScheduleInteractiveDocumentRender(); e.Handled = true; return;
         }
         if (isMarqueeSelecting)
         {
@@ -752,15 +746,16 @@ public partial class MainWindow : Window
             Point p = e.GetPosition(BoardCanvas); double x = Math.Min(startPoint.X, p.X), y = Math.Min(startPoint.Y, p.Y), w = Math.Max(2, Math.Abs(p.X - startPoint.X)), h = Math.Max(2, Math.Abs(p.Y - startPoint.Y));
             InkCanvas.SetLeft(drawingShape, x); InkCanvas.SetTop(drawingShape, y); drawingShape.Width = w; drawingShape.Height = h;
             if (drawingShape is Line line) { line.X1 = startPoint.X - x; line.Y1 = startPoint.Y - y; line.X2 = p.X - x; line.Y2 = p.Y - y; }
+            ScheduleInteractiveDocumentRender();
         }
     }
     private void Viewport_MouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (isRotating) { isRotating = false; rotatingShape = null; Viewport.ReleaseMouseCapture(); UpdateRotationHandle(); SaveCurrentBoard(); EndLiveWpfPreview(); e.Handled = true; return; }
+        if (isRotating) { isRotating = false; rotatingShape = null; Viewport.ReleaseMouseCapture(); UpdateRotationHandle(); SaveCurrentBoard(); e.Handled = true; return; }
         if (isPanning) { isPanning = false; Viewport.ReleaseMouseCapture(); e.Handled = true; return; }
         if (isDraggingElements)
         {
-            isDraggingElements = false; draggedElements.Clear(); Viewport.ReleaseMouseCapture(); UpdateSelectionVisuals(); SaveCurrentBoard(); EndLiveWpfPreview(); e.Handled = true; return;
+            isDraggingElements = false; draggedElements.Clear(); Viewport.ReleaseMouseCapture(); UpdateSelectionVisuals(); SaveCurrentBoard(); e.Handled = true; return;
         }
         if (isMarqueeSelecting)
         {

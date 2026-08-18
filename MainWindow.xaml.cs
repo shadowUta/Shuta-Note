@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Ink;
@@ -30,6 +31,9 @@ public partial class MainWindow : Window
     private readonly GpuDeviceManager gpuDevice = new();
     private readonly GpuCanvasRenderer gpuCanvas = new();
     private readonly CanvasCoordinateTransform coordinateTransform = new();
+    private readonly SemaphoreSlim saveGate = new(1, 1);
+    private CancellationTokenSource? saveDebounce;
+    private string? pendingBoardPath, pendingBoardJson, pendingIndexJson;
     private D3DImageCanvasHost? gpuCanvasHost;
     private bool rebuildingGpuBackend;
     private bool liveWpfPreview;
@@ -69,7 +73,7 @@ public partial class MainWindow : Window
             windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             windowSource?.AddHook(WindowMessageHook);
         };
-        Closed += (_, _) => { windowSource?.RemoveHook(WindowMessageHook); gpuCanvasHost?.Dispose(); gpuCanvas.Dispose(); gpuDevice.Dispose(); };
+        Closed += (_, _) => { saveDebounce?.Dispose(); saveGate.Dispose(); windowSource?.RemoveHook(WindowMessageHook); gpuCanvasHost?.Dispose(); gpuCanvas.Dispose(); gpuDevice.Dispose(); };
     }
 
     private void LoadAppearanceSettings()
@@ -281,8 +285,52 @@ public partial class MainWindow : Window
     {
         if (currentBoard is null || restoring) return;
         CanvasDocument document = CaptureDocument();
-        currentBoard.UpdatedAt = DateTime.Now; File.WriteAllText(BoardPath(currentBoard), JsonSerializer.Serialize(document.ToState(), jsonOptions)); SaveIndex(); SaveStatus.Text = "已保存";
+        currentBoard.UpdatedAt = DateTime.Now;
+        QueueBoardSave(BoardPath(currentBoard), JsonSerializer.Serialize(document.ToState(), jsonOptions), JsonSerializer.Serialize(boards, jsonOptions));
         RenderGpuDocument(document);
+    }
+
+    private void QueueBoardSave(string boardPath, string boardJson, string indexJson)
+    {
+        pendingBoardPath = boardPath; pendingBoardJson = boardJson; pendingIndexJson = indexJson;
+        SaveStatus.Text = "正在保存…";
+        saveDebounce?.Cancel();
+        saveDebounce?.Dispose();
+        saveDebounce = new CancellationTokenSource();
+        _ = FlushPendingSaveAsync(saveDebounce.Token);
+    }
+
+    private async Task FlushPendingSaveAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(180, token);
+            string? boardPath = pendingBoardPath, boardJson = pendingBoardJson, indexJson = pendingIndexJson;
+            if (boardPath is null || boardJson is null || indexJson is null) return;
+            await saveGate.WaitAsync(token);
+            try
+            {
+                await File.WriteAllTextAsync(boardPath, boardJson, token);
+                await File.WriteAllTextAsync(IOPath.Combine(dataDir, "boards.json"), indexJson, token);
+            }
+            finally { saveGate.Release(); }
+            if (!token.IsCancellationRequested) SaveStatus.Text = "已保存";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { if (!token.IsCancellationRequested) SaveStatus.Text = "保存失败"; }
+    }
+
+    private void FlushPendingSaveSynchronously()
+    {
+        saveDebounce?.Cancel();
+        if (pendingBoardPath is null || pendingBoardJson is null || pendingIndexJson is null) return;
+        saveGate.Wait();
+        try
+        {
+            File.WriteAllText(pendingBoardPath, pendingBoardJson);
+            File.WriteAllText(IOPath.Combine(dataDir, "boards.json"), pendingIndexJson);
+        }
+        finally { saveGate.Release(); }
     }
     private string CaptureState()
     {
@@ -895,7 +943,7 @@ public partial class MainWindow : Window
     {
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { DependencyObject child = VisualTreeHelper.GetChild(root, i); if (child is T match) yield return match; foreach (var nested in FindVisualChildren<T>(child)) yield return nested; }
     }
-    private void Window_Closing(object? sender, CancelEventArgs e) => SaveCurrentBoard();
+    private void Window_Closing(object? sender, CancelEventArgs e) { SaveCurrentBoard(); FlushPendingSaveSynchronously(); }
 }
 
 public enum ToolKind { Select, Pen, Text, Rectangle, Ellipse, Arrow }

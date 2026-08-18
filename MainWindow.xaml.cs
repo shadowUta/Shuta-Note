@@ -54,7 +54,7 @@ public partial class MainWindow : Window
     private Point startPoint, panStart, selectionStart, rotationCenter, elementDragStart;
     private Point resizeStart, resizeAnchor;
     private double panHorizontal, panVertical, zoom = 1;
-    private bool isPanning, isMarqueeSelecting, isRotating, isResizing, isDraggingElements, isColorPicking, colorPreviewStarted, isThemeColorPicking, restoring, appearanceReady;
+    private bool isPanning, isMarqueeSelecting, isRotating, isResizing, isDraggingElements, isColorPicking, isSynchronizingColorControls, colorPreviewStarted, isThemeColorPicking, restoring, appearanceReady;
     private double rotationStartAngle, shapeStartRotation, colorSaturation = 1, colorValue = 1;
     private Shape? rotatingShape;
     private UIElement? resizingElement;
@@ -1055,7 +1055,7 @@ public partial class MainWindow : Window
     private void OpenColorPalette(Color color, bool forTheme)
     {
         isThemeColorPicking = forTheme; ColorPaletteOverlay.Visibility = Visibility.Visible; colorPreviewStarted = false;
-        RgbToHsv(color, out double hue, out colorSaturation, out colorValue); HueSlider.Value = hue; UpdateColorFieldPointer(); PreviewPickerColor();
+        SetColorControls(color, true); PreviewPickerColor(color);
     }
     private void CloseColorPalette_Click(object sender, RoutedEventArgs e) => CloseColorPalette();
     private void ColorPaletteOverlay_MouseDown(object sender, MouseButtonEventArgs e) => CloseColorPalette();
@@ -1066,9 +1066,18 @@ public partial class MainWindow : Window
         isThemeColorPicking = false;
     }
     private void ColorPaletteCard_MouseDown(object sender, MouseButtonEventArgs e) => e.Handled = true;
-    private void HueSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    private void RgbSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (HueColorStop is null) return; HueColorStop.Color = HsvToRgb(e.NewValue, 1, 1); if (ColorPaletteOverlay?.Visibility == Visibility.Visible) PreviewPickerColor();
+        if (isSynchronizingColorControls || ColorPaletteOverlay?.Visibility != Visibility.Visible) return;
+        Color color = Color.FromRgb((byte)Math.Round(RedSlider.Value), (byte)Math.Round(GreenSlider.Value), (byte)Math.Round(BlueSlider.Value));
+        SetColorControls(color, true); PreviewPickerColor(color);
+    }
+    private void HsvSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (isSynchronizingColorControls || HueColorStop is null || ColorPaletteOverlay?.Visibility != Visibility.Visible) return;
+        colorSaturation = SaturationSlider.Value / 100d; colorValue = ValueSlider.Value / 100d;
+        Color color = HsvToRgb(HueSlider.Value, colorSaturation, colorValue);
+        SetColorControls(color, false); PreviewPickerColor(color);
     }
     private void ColorField_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { isColorPicking = true; ColorField.CaptureMouse(); UpdatePickerFromMouse(e.GetPosition(ColorField)); e.Handled = true; }
     private void ColorField_MouseMove(object sender, MouseEventArgs e) { if (isColorPicking && e.LeftButton == MouseButtonState.Pressed) UpdatePickerFromMouse(e.GetPosition(ColorField)); }
@@ -1076,15 +1085,35 @@ public partial class MainWindow : Window
     private void UpdatePickerFromMouse(Point point)
     {
         colorSaturation = Math.Clamp(point.X / Math.Max(1, ColorField.ActualWidth), 0, 1); colorValue = 1 - Math.Clamp(point.Y / Math.Max(1, ColorField.ActualHeight), 0, 1);
-        UpdateColorFieldPointer(); PreviewPickerColor();
+        Color color = HsvToRgb(HueSlider.Value, colorSaturation, colorValue); SetColorControls(color, false); PreviewPickerColor(color);
     }
     private void UpdateColorFieldPointer()
     {
         if (ColorField is null) return; ColorFieldPointer.Margin = new Thickness(colorSaturation * Math.Max(0, ColorField.ActualWidth) - 8, (1 - colorValue) * Math.Max(0, ColorField.ActualHeight) - 8, 0, 0);
     }
-    private void PreviewPickerColor()
+    private void SetColorControls(Color color, bool updateHsv)
     {
-        Color pickedColor = HsvToRgb(HueSlider.Value, colorSaturation, colorValue);
+        isSynchronizingColorControls = true;
+        try
+        {
+            double hue = HueSlider.Value;
+            if (updateHsv)
+            {
+                RgbToHsv(color, out double convertedHue, out colorSaturation, out colorValue);
+                if (colorSaturation > 0) hue = convertedHue;
+            }
+            RedSlider.Value = color.R; GreenSlider.Value = color.G; BlueSlider.Value = color.B;
+            HueSlider.Value = hue;
+            SaturationSlider.Value = colorSaturation * 100; ValueSlider.Value = colorValue * 100;
+            RedValueText.Text = color.R.ToString(); GreenValueText.Text = color.G.ToString(); BlueValueText.Text = color.B.ToString();
+            HueValueText.Text = $"{HueSlider.Value:0}°"; SaturationValueText.Text = $"{colorSaturation * 100:0}%"; ValueValueText.Text = $"{colorValue * 100:0}%";
+            HueColorStop.Color = HsvToRgb(HueSlider.Value, 1, 1);
+            UpdateColorFieldPointer();
+        }
+        finally { isSynchronizingColorControls = false; }
+    }
+    private void PreviewPickerColor(Color pickedColor)
+    {
         ColorPreview.Background = new SolidColorBrush(pickedColor); ColorHexText.Text = pickedColor.ToString();
         if (isThemeColorPicking)
         {

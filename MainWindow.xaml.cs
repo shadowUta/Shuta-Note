@@ -170,9 +170,9 @@ public partial class MainWindow : Window
                 gpuCanvasHost = CreateGpuHost();
                 if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, surfaceWidth, surfaceHeight, gpuCanvas.SharedHandle))
                 {
-                    Viewport.Children.Insert(1, gpuCanvasHost);
-                    Panel.SetZIndex(gpuCanvasHost, 1);
-                    BoardCanvas.Opacity = 0;
+                    Viewport.Children.Insert(0, gpuCanvasHost);
+                    Panel.SetZIndex(gpuCanvasHost, -1);
+                    BoardCanvas.Opacity = 1;
                     RenderGpuDocument();
                     UpdateGpuDiagnostics();
                 }
@@ -419,9 +419,9 @@ public partial class MainWindow : Window
                 return false;
             }
             gpuCanvasHost = replacement;
-            Viewport.Children.Insert(1, replacement);
-            Panel.SetZIndex(replacement, 1);
-            BoardCanvas.Opacity = 0;
+            Viewport.Children.Insert(0, replacement);
+            Panel.SetZIndex(replacement, -1);
+            BoardCanvas.Opacity = 1;
             if (!gpuCanvas.Render(CaptureDocument(), appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset, viewportDpiScale)) return false;
             replacement.InvalidateSurface();
             HintText.Text = "GPU 设备已重建";
@@ -565,8 +565,8 @@ public partial class MainWindow : Window
     private TextBox CreateTextBox(ElementData item)
     {
         var text = new TextBox { Text = item.Text ?? "", Width = item.Width, Height = item.Height, FontSize = item.FontSize <= 0 ? 18 : item.FontSize, FontFamily = new FontFamily(item.FontFamily ?? "Microsoft YaHei UI"), Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.Color ?? "#1C2033")), FontWeight = item.Bold ? FontWeights.Bold : FontWeights.Normal, FontStyle = item.Italic ? FontStyles.Italic : FontStyles.Normal, TextDecorations = item.Underline ? TextDecorations.Underline : null, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new Thickness(1), BorderBrush = Brushes.Transparent, Background = Brushes.Transparent, Padding = new Thickness(5) };
-        text.GotFocus += (_, _) => { text.BorderBrush = new SolidColorBrush(Color.FromRgb(102, 87, 232)); if (gpuCanvasHost?.IsReady == true) { gpuCanvasHost.Visibility = Visibility.Hidden; BoardCanvas.Opacity = 1; } };
-        text.LostFocus += (_, _) => { text.BorderBrush = Brushes.Transparent; SaveCurrentBoard(); if (gpuCanvasHost?.IsReady == true) { BoardCanvas.Opacity = 0; gpuCanvasHost.Visibility = Visibility.Visible; } }; return text;
+        text.GotFocus += (_, _) => { text.BorderBrush = new SolidColorBrush(Color.FromRgb(102, 87, 232)); };
+        text.LostFocus += (_, _) => { text.BorderBrush = Brushes.Transparent; SaveCurrentBoard(); }; return text;
     }
     private void AddElement(UIElement element, double x, double y) { InkCanvas.SetLeft(element, x); InkCanvas.SetTop(element, y); BoardCanvas.Children.Add(element); }
     private void BoardCanvas_StrokeCollected(object sender, InkCanvasStrokeCollectedEventArgs e)

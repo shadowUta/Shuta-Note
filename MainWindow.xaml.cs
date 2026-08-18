@@ -43,6 +43,9 @@ public partial class MainWindow : Window
     private BoardInfo? currentBoard;
     private ToolKind tool;
     private Shape? drawingShape;
+    private Stroke? activeStroke;
+    private readonly List<StylusPoint> pendingStrokePoints = [];
+    private bool strokeFrameSubscribed;
     private Point startPoint, panStart, selectionStart, rotationCenter, elementDragStart;
     private double panHorizontal, panVertical, zoom = 1;
     private bool isPanning, isMarqueeSelecting, isRotating, isDraggingElements, isColorPicking, colorPreviewStarted, isThemeColorPicking, restoring, appearanceReady;
@@ -75,7 +78,7 @@ public partial class MainWindow : Window
             windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
             windowSource?.AddHook(WindowMessageHook);
         };
-        Closed += (_, _) => { saveDebounce?.Dispose(); saveGate.Dispose(); windowSource?.RemoveHook(WindowMessageHook); gpuCanvasHost?.Dispose(); gpuCanvas.Dispose(); gpuDevice.Dispose(); };
+        Closed += (_, _) => { UnsubscribeStrokeFrame(); saveDebounce?.Dispose(); saveGate.Dispose(); windowSource?.RemoveHook(WindowMessageHook); gpuCanvasHost?.Dispose(); gpuCanvas.Dispose(); gpuDevice.Dispose(); };
     }
 
     private void LoadAppearanceSettings()
@@ -469,7 +472,7 @@ public partial class MainWindow : Window
     private void Tool_Click(object sender, RoutedEventArgs e) { if (sender is FrameworkElement { Tag: string tag } && Enum.TryParse(tag, out ToolKind next)) SetTool(next); }
     private void SetTool(ToolKind next)
     {
-        tool = next; BoardCanvas.EditingMode = next switch { ToolKind.Select => InkCanvasEditingMode.Select, ToolKind.Pen => InkCanvasEditingMode.Ink, _ => InkCanvasEditingMode.None };
+        tool = next; BoardCanvas.EditingMode = next == ToolKind.Select ? InkCanvasEditingMode.Select : InkCanvasEditingMode.None;
         if (next == ToolKind.Pen) BeginLiveWpfPreview();
         else if (!isDraggingElements && !isRotating && drawingShape is null) EndLiveWpfPreview();
         BoardCanvas.Cursor = next == ToolKind.Text ? Cursors.IBeam : Cursors.Arrow;
@@ -478,7 +481,22 @@ public partial class MainWindow : Window
     }
     private void BoardCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (tool == ToolKind.Pen) { RecordUndo(); BeginLiveWpfPreview(); return; }
+        if (tool == ToolKind.Pen)
+        {
+            RecordUndo(); BeginLiveWpfPreview();
+            Point point = e.GetPosition(BoardCanvas);
+            activeStroke = new Stroke(new StylusPointCollection([new StylusPoint(point.X, point.Y)]))
+            {
+                DrawingAttributes = BoardCanvas.DefaultDrawingAttributes.Clone()
+            };
+            activeStroke.DrawingAttributes.FitToCurve = false;
+            BoardCanvas.Strokes.Add(activeStroke);
+            pendingStrokePoints.Clear();
+            SubscribeStrokeFrame();
+            BoardCanvas.CaptureMouse();
+            e.Handled = true;
+            return;
+        }
         if (tool == ToolKind.Select) return;
         startPoint = e.GetPosition(BoardCanvas); RecordUndo();
         if (tool == ToolKind.Text)
@@ -490,6 +508,19 @@ public partial class MainWindow : Window
     }
     private void BoardCanvas_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (activeStroke is not null)
+        {
+            QueueStrokePoint(e.GetPosition(BoardCanvas));
+            FlushStrokePoints();
+            activeStroke = null;
+            pendingStrokePoints.Clear();
+            UnsubscribeStrokeFrame();
+            BoardCanvas.ReleaseMouseCapture();
+            redo.Clear();
+            SaveCurrentBoard();
+            e.Handled = true;
+            return;
+        }
         if (drawingShape is null) return;
         Shape completedShape = drawingShape; drawingShape = null; BoardCanvas.ReleaseMouseCapture();
         BoardCanvas.Select(new StrokeCollection(), new List<UIElement> { completedShape }); SaveCurrentBoard(); EndLiveWpfPreview(); SetTool(ToolKind.Select); e.Handled = true;
@@ -512,6 +543,37 @@ public partial class MainWindow : Window
         if (restoring) return;
         redo.Clear();
         SaveCurrentBoard();
+    }
+
+    private void SubscribeStrokeFrame()
+    {
+        if (strokeFrameSubscribed) return;
+        CompositionTarget.Rendering += StrokeFrame_Rendering;
+        strokeFrameSubscribed = true;
+    }
+
+    private void UnsubscribeStrokeFrame()
+    {
+        if (!strokeFrameSubscribed) return;
+        CompositionTarget.Rendering -= StrokeFrame_Rendering;
+        strokeFrameSubscribed = false;
+    }
+
+    private void StrokeFrame_Rendering(object? sender, EventArgs e) => FlushStrokePoints();
+
+    private void QueueStrokePoint(Point point)
+    {
+        if (activeStroke is null) return;
+        StylusPoint last = pendingStrokePoints.Count > 0 ? pendingStrokePoints[^1] : activeStroke.StylusPoints[^1];
+        double dx = point.X - last.X, dy = point.Y - last.Y;
+        if (dx * dx + dy * dy >= .36) pendingStrokePoints.Add(new StylusPoint(point.X, point.Y));
+    }
+
+    private void FlushStrokePoints()
+    {
+        if (activeStroke is null || pendingStrokePoints.Count == 0) return;
+        activeStroke.StylusPoints.Add(new StylusPointCollection(pendingStrokePoints));
+        pendingStrokePoints.Clear();
     }
 
     private void BeginLiveWpfPreview()
@@ -631,6 +693,12 @@ public partial class MainWindow : Window
     private void Viewport_MouseMove(object sender, MouseEventArgs e)
     {
         UpdateGridHighlight(e.GetPosition(BoardCanvas));
+        if (activeStroke is not null && e.LeftButton == MouseButtonState.Pressed)
+        {
+            QueueStrokePoint(e.GetPosition(BoardCanvas));
+            e.Handled = true;
+            return;
+        }
         if (isRotating && rotatingShape is not null)
         {
             Point mouse = e.GetPosition(Viewport); double angle = Math.Atan2(mouse.Y - rotationCenter.Y, mouse.X - rotationCenter.X) * 180 / Math.PI;

@@ -100,7 +100,7 @@ public sealed class GpuCanvasRenderer : IDisposable
         }
     }
 
-    public bool Render(CanvasDocument document, bool darkMode, double zoom = 1, double offsetX = 0, double offsetY = 0)
+    public bool Render(CanvasDocument document, bool darkMode, double zoom = 1, double offsetX = 0, double offsetY = 0, double dpiScale = 1)
     {
         if (target is null || writeFactory is null) return false;
         try
@@ -109,12 +109,13 @@ public sealed class GpuCanvasRenderer : IDisposable
             Color4 gridColor = darkMode ? Rgba(66, 72, 88, .72f) : Rgba(203, 208, 219, .78f);
             target.BeginDraw();
             target.Clear(background);
-            Matrix3x2 viewportTransform = Matrix3x2.CreateScale((float)zoom) * Matrix3x2.CreateTranslation((float)-offsetX, (float)-offsetY);
+            float pixelScale = (float)(zoom * dpiScale);
+            Matrix3x2 viewportTransform = Matrix3x2.CreateScale(pixelScale) * Matrix3x2.CreateTranslation((float)(-offsetX * dpiScale), (float)(-offsetY * dpiScale));
             target.Transform = viewportTransform;
             using (ID2D1SolidColorBrush grid = target.CreateSolidColorBrush(gridColor))
             {
                 double left = offsetX / zoom, top = offsetY / zoom;
-                double right = (offsetX + pixelWidth) / zoom, bottom = (offsetY + pixelHeight) / zoom;
+                double right = (offsetX + pixelWidth / dpiScale) / zoom, bottom = (offsetY + pixelHeight / dpiScale) / zoom;
                 int firstX = Math.Max(0, (int)Math.Floor(left / 24) * 24);
                 int firstY = Math.Max(0, (int)Math.Floor(top / 24) * 24);
                 for (int x = firstX; x <= Math.Min(5000, right); x += 24) target.DrawLine(new Vector2(x, (float)Math.Max(0, top)), new Vector2(x, (float)Math.Min(3500, bottom)), grid, .65f);
@@ -145,13 +146,14 @@ public sealed class GpuCanvasRenderer : IDisposable
     }
 
     public bool RenderStrokeSegments(IReadOnlyList<PointData> points, string color, double width,
-        double zoom, double offsetX, double offsetY)
+        double zoom, double offsetX, double offsetY, double dpiScale = 1)
     {
         if (target is null || points.Count < 2) return false;
         try
         {
             target.BeginDraw();
-            target.Transform = Matrix3x2.CreateScale((float)zoom) * Matrix3x2.CreateTranslation((float)-offsetX, (float)-offsetY);
+            float pixelScale = (float)(zoom * dpiScale);
+            target.Transform = Matrix3x2.CreateScale(pixelScale) * Matrix3x2.CreateTranslation((float)(-offsetX * dpiScale), (float)(-offsetY * dpiScale));
             using ID2D1SolidColorBrush brush = target.CreateSolidColorBrush(ParseColor(color));
             float strokeWidth = (float)Math.Max(.5, width);
             for (int index = 1; index < points.Count; index++)

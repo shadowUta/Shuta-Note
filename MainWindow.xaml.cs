@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private bool liveWpfPreview;
     private bool viewportRenderQueued;
     private CanvasDocument? renderedDocument;
+    private double viewportDpiScale = 1;
     private HwndSource? windowSource;
     private BoardInfo? currentBoard;
     private ToolKind tool;
@@ -163,11 +164,10 @@ public partial class MainWindow : Window
 
         if (gpuDevice.TryInitialize())
         {
-            int surfaceWidth = Math.Max(1, (int)Math.Ceiling(Viewport.ActualWidth));
-            int surfaceHeight = Math.Max(1, (int)Math.Ceiling(Viewport.ActualHeight));
+            (int surfaceWidth, int surfaceHeight) = GetGpuSurfacePixels();
             if (gpuCanvas.TryInitialize() && gpuCanvas.TryCreateSurface(surfaceWidth, surfaceHeight))
             {
-                gpuCanvasHost = new D3DImageCanvasHost { Width = surfaceWidth, Height = surfaceHeight, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+                gpuCanvasHost = CreateGpuHost();
                 if (gpuCanvasHost.TryInitialize(new WindowInteropHelper(this).Handle, surfaceWidth, surfaceHeight, gpuCanvas.SharedHandle))
                 {
                     Viewport.Children.Insert(1, gpuCanvasHost);
@@ -371,7 +371,7 @@ public partial class MainWindow : Window
     {
         renderedDocument = document;
         if (gpuCanvasHost?.IsReady != true) return;
-        if (gpuCanvas.Render(document, appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset)) gpuCanvasHost.InvalidateSurface();
+        if (gpuCanvas.Render(document, appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset, viewportDpiScale)) gpuCanvasHost.InvalidateSurface();
         else if (!rebuildingGpuBackend && gpuCanvas.IsDeviceLost && TryRebuildGpuBackend()) return;
         else if (renderOptions.EnableGpuFallback)
         {
@@ -399,10 +399,9 @@ public partial class MainWindow : Window
             gpuCanvasHost?.Dispose();
             if (gpuCanvasHost is not null) Viewport.Children.Remove(gpuCanvasHost);
             gpuCanvasHost = null;
-            int surfaceWidth = Math.Max(1, (int)Math.Ceiling(Viewport.ActualWidth));
-            int surfaceHeight = Math.Max(1, (int)Math.Ceiling(Viewport.ActualHeight));
+            (int surfaceWidth, int surfaceHeight) = GetGpuSurfacePixels();
             if (!gpuCanvas.TryRebuildSurface(surfaceWidth, surfaceHeight)) return false;
-            var replacement = new D3DImageCanvasHost { Width = surfaceWidth, Height = surfaceHeight, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+            var replacement = CreateGpuHost();
             if (!replacement.TryInitialize(new WindowInteropHelper(this).Handle, surfaceWidth, surfaceHeight, gpuCanvas.SharedHandle))
             {
                 replacement.Dispose();
@@ -412,7 +411,7 @@ public partial class MainWindow : Window
             Viewport.Children.Insert(1, replacement);
             Panel.SetZIndex(replacement, 1);
             BoardCanvas.Opacity = 0;
-            if (!gpuCanvas.Render(CaptureDocument(), appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset)) return false;
+            if (!gpuCanvas.Render(CaptureDocument(), appearance.DarkMode, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset, viewportDpiScale)) return false;
             replacement.InvalidateSurface();
             HintText.Text = "GPU 设备已重建";
             return true;
@@ -423,6 +422,26 @@ public partial class MainWindow : Window
             if (gpuCanvasHost?.IsReady != true && renderOptions.EnableGpuFallback)
                 ActivateWpfFallback($"GPU 设备重建失败，已回退到 WPF 画布 · {gpuCanvas.Status}");
         }
+    }
+
+    private (int Width, int Height) GetGpuSurfacePixels()
+    {
+        DpiScale dpi = VisualTreeHelper.GetDpi(Viewport);
+        viewportDpiScale = dpi.DpiScaleX;
+        return (Math.Max(1, (int)Math.Ceiling(Viewport.ActualWidth * dpi.DpiScaleX)),
+            Math.Max(1, (int)Math.Ceiling(Viewport.ActualHeight * dpi.DpiScaleY)));
+    }
+
+    private D3DImageCanvasHost CreateGpuHost()
+    {
+        return new D3DImageCanvasHost
+        {
+            Width = Viewport.ActualWidth,
+            Height = Viewport.ActualHeight,
+            IsHitTestVisible = false,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
+        };
     }
 
     private void ActivateWpfFallback(string message)
@@ -580,7 +599,7 @@ public partial class MainWindow : Window
             var segments = new List<PointData>(pendingStrokePoints.Count + 1) { new(previous.X, previous.Y) };
             segments.AddRange(pendingStrokePoints.Select(point => new PointData(point.X, point.Y)));
             if (gpuCanvas.RenderStrokeSegments(segments, activeStroke.DrawingAttributes.Color.ToString(),
-                activeStroke.DrawingAttributes.Width, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset))
+                activeStroke.DrawingAttributes.Width, zoom, CanvasScroll.HorizontalOffset, CanvasScroll.VerticalOffset, viewportDpiScale))
                 gpuCanvasHost.InvalidateSurface();
             gpuStrokeLastPoint = pendingStrokePoints[^1];
         }

@@ -117,7 +117,7 @@ public partial class MainWindow : Window
     private void ApplyAppearance(bool save = true)
     {
         Color accent = ParseColor(appearance.AccentColor, Color.FromRgb(102, 87, 232)); bool dark = appearance.DarkMode;
-        SetBrush("Primary", accent); SetBrush("TextBrush", dark ? Color.FromRgb(235, 238, 246) : Color.FromRgb(28, 32, 51));
+        SetBrush("Primary", accent); SetBrush("PrimaryForeground", GetContrastingTextColor(accent)); SetBrush("TextBrush", dark ? Color.FromRgb(235, 238, 246) : Color.FromRgb(28, 32, 51));
         SetBrush("WindowBackground", dark ? Color.FromRgb(18, 21, 29) : Color.FromRgb(233, 237, 245), dark ? .72 : .58);
         // Keep the WPF panels translucent so the window-level Acrylic compositor is visible.
         SetBrush("GlassBrush", dark ? Color.FromRgb(37, 41, 53) : Colors.White, appearance.GlassOpacity / 100d * .24);
@@ -136,6 +136,11 @@ public partial class MainWindow : Window
     private void SetBrush(string key, Color color, double opacity = 1) => Resources[key] = new SolidColorBrush(color) { Opacity = Math.Clamp(opacity, 0, 1) };
     private static Color ParseColor(string value, Color fallback) { try { return (Color)ColorConverter.ConvertFromString(value); } catch { return fallback; } }
     private static Color Mix(Color foreground, Color background, double amount) => Color.FromRgb((byte)(background.R + (foreground.R - background.R) * amount), (byte)(background.G + (foreground.G - background.G) * amount), (byte)(background.B + (foreground.B - background.B) * amount));
+    private static Color GetContrastingTextColor(Color background)
+    {
+        RgbToHsv(background, out _, out _, out double value);
+        return value < .5 ? Colors.White : Colors.Black;
+    }
 
     private void InstallGlassBackdrops()
     {
@@ -1108,10 +1113,31 @@ public partial class MainWindow : Window
             RedValueText.Text = color.R.ToString(); GreenValueText.Text = color.G.ToString(); BlueValueText.Text = color.B.ToString();
             HueValueText.Text = $"{HueSlider.Value:0}°"; SaturationValueText.Text = $"{colorSaturation * 100:0}%"; ValueValueText.Text = $"{colorValue * 100:0}%";
             HueColorStop.Color = HsvToRgb(HueSlider.Value, 1, 1);
+            UpdateColorSliderBrushes(color);
             UpdateColorFieldPointer();
         }
         finally { isSynchronizingColorControls = false; }
     }
+    private void UpdateColorSliderBrushes(Color color)
+    {
+        RedSlider.Background = CreateGradient(Color.FromRgb(0, color.G, color.B), Color.FromRgb(255, color.G, color.B));
+        GreenSlider.Background = CreateGradient(Color.FromRgb(color.R, 0, color.B), Color.FromRgb(color.R, 255, color.B));
+        BlueSlider.Background = CreateGradient(Color.FromRgb(color.R, color.G, 0), Color.FromRgb(color.R, color.G, 255));
+        HueSlider.Background = new LinearGradientBrush
+        {
+            StartPoint = new Point(0, .5), EndPoint = new Point(1, .5),
+            GradientStops = new GradientStopCollection
+            {
+                new(Colors.Red, 0), new(Colors.Yellow, 1d / 6), new(Colors.Lime, 2d / 6), new(Colors.Cyan, 3d / 6),
+                new(Colors.Blue, 4d / 6), new(Colors.Magenta, 5d / 6), new(Colors.Red, 1)
+            }
+        };
+        Color saturationStart = HsvToRgb(HueSlider.Value, 0, colorValue);
+        Color saturationEnd = HsvToRgb(HueSlider.Value, 1, colorValue);
+        SaturationSlider.Background = CreateGradient(saturationStart, saturationEnd);
+        ValueSlider.Background = CreateGradient(Colors.Black, Colors.White);
+    }
+    private static LinearGradientBrush CreateGradient(Color start, Color end) => new(start, end, new Point(0, .5), new Point(1, .5));
     private void PreviewPickerColor(Color pickedColor)
     {
         ColorPreview.Background = new SolidColorBrush(pickedColor); ColorHexText.Text = pickedColor.ToString();

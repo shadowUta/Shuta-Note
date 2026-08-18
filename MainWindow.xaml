@@ -115,7 +115,7 @@
                     <Grid Margin="0,0,0,8"><TextBlock Text="前景玻璃不透明度" FontWeight="SemiBold"/><TextBlock x:Name="OpacityValueText" Text="90%" HorizontalAlignment="Right" Foreground="{DynamicResource MutedBrush}"/></Grid>
                     <Slider x:Name="GlassOpacitySlider" Minimum="35" Maximum="300" Value="90" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="GlassOpacitySlider_ValueChanged"/>
                     <Grid Margin="0,20,0,8"><TextBlock Text="主页玻璃模糊度" FontWeight="SemiBold"/><TextBlock x:Name="GlassBlurValueText" Text="18" HorizontalAlignment="Right" Foreground="{DynamicResource MutedBrush}"/></Grid>
-                    <Slider x:Name="GlassBlurSlider" Minimum="0" Maximum="40" Value="18" TickFrequency="2" IsSnapToTickEnabled="True" ValueChanged="GlassBlurSlider_ValueChanged"/>
+                    <Slider x:Name="GlassBlurSlider" Minimum="0" Maximum="120" Value="18" TickFrequency="2" IsSnapToTickEnabled="True" ValueChanged="GlassBlurSlider_ValueChanged"/>
                     <TextBlock Text="GPU 画布" FontWeight="SemiBold" Margin="0,24,0,10"/>
                     <CheckBox x:Name="GpuCanvasCheckBox" Content="启用 GPU 画布（初始化失败时自动回退）" Checked="GpuCanvasCheckBox_Changed" Unchecked="GpuCanvasCheckBox_Changed"/>
                     <CheckBox x:Name="GpuFallbackCheckBox" Content="允许软件画布回退" Margin="0,8,0,0" Checked="GpuFallbackCheckBox_Changed" Unchecked="GpuFallbackCheckBox_Changed"/>

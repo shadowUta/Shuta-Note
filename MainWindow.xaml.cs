@@ -91,7 +91,7 @@ public partial class MainWindow : Window
         LightModeRadio.IsChecked = !appearance.DarkMode;
         DarkModeRadio.IsChecked = appearance.DarkMode;
         GlassOpacitySlider.Value = Math.Clamp(appearance.GlassOpacity, 35, 300);
-        GlassBlurSlider.Value = Math.Clamp(appearance.GlassBlur, 0, 40);
+        GlassBlurSlider.Value = Math.Clamp(appearance.GlassBlur, 0, 120);
         GpuCanvasCheckBox.IsChecked = renderOptions.Backend == CanvasRenderBackend.Direct2DComposition;
         GpuFallbackCheckBox.IsChecked = renderOptions.EnableGpuFallback;
         GpuDiagnosticsCheckBox.IsChecked = renderOptions.ShowDiagnostics;
@@ -140,7 +140,7 @@ public partial class MainWindow : Window
 
             // Acrylic blur is a compositor effect; DropShadowEffect only blurs a shadow.
             // GradientColor is stored as AABBGGRR by SetWindowCompositionAttribute.
-            double blurStrength = Math.Clamp(appearance.GlassBlur / 40d, 0, 1);
+            double blurStrength = Math.Clamp(appearance.GlassBlur / 120d, 0, 1);
             uint alpha = (uint)Math.Clamp(appearance.GlassOpacity * (.82 - blurStrength * .28), 20, 220);
             byte tint = appearance.DarkMode ? (byte)28 : (byte)238;
             byte blurTint = (byte)Math.Clamp(tint + appearance.GlassBlur * (appearance.DarkMode ? .28 : .06), 0, 255);
